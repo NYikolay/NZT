@@ -3,12 +3,12 @@ from src.core.config import settings
 from fastapi import FastAPI
 
 from sqlalchemy.ext.asyncio import AsyncEngine
-from src.core.lifetime import lifespan
+from src.api.lifetime import lifespan
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
-from src.core.routers import get_apps_router
+from src.api.routers import get_apps_router
 
 
 def create_app(engine: AsyncEngine | None = None, **kwargs) -> FastAPI:
@@ -36,5 +36,6 @@ def create_app(engine: AsyncEngine | None = None, **kwargs) -> FastAPI:
     application.include_router(get_apps_router())
 
     return application
+
 
 app = create_app()

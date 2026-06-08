@@ -12,22 +12,32 @@ x-env: &env
 services:
   db:
     <<: *env
-    image: postgres:16
-    container_name: nzt-postgres-dev
+    build:
+      context: ./postgres-extensions-docker
+      dockerfile: Dockerfile
+      args:
+        POSTGRES_VERSION: "17"
+        TIMESCALEDB_VERSION: "2.18.0"
+        PGVECTOR_VERSION: "0.8.0"
+        AGE_VERSION: "1.5.0"
+    container_name: postgres-ext-dev
     environment:
       - POSTGRES_DB=${POSTGRES_NAME}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - PGPORT=${POSTGRES_PORT}
+      - PGDATA=/var/lib/postgresql/data/pgdata
     ports:
-      - 5433:${POSTGRES_PORT}
+      - 5432:${POSTGRES_PORT}
+    volumes:
+      - nzt_postgres_data:/var/lib/postgresql/data
+      - ./postgres-extensions-docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    shm_size: "256mb"
     healthcheck:
       test: pg_isready -d ${POSTGRES_NAME} -U ${POSTGRES_USER}
       interval: 5s
       timeout: 5s
       retries: 5
-    volumes:
-      - nzt_postgres_data:/var/lib/postgresql/data
     networks:
       - nzt-backend-network
   redis:

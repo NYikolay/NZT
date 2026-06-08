@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 INSTALLED_APPS = [
-    "src.users",
+    "src.domain.users",
 ]
 
 
@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     @property
     def all_cors_origins(self) -> list[str]:
         return [str(origin).rstrip("/") for origin in self.BACKEND_CORS_ORIGINS]
-    
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def all_hosts_origins(self) -> list[str]:
