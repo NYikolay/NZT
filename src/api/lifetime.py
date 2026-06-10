@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from fastapi import FastAPI
 
-from ..core.config import settings
+from src.core.config import settings
 
 
 @asynccontextmanager
