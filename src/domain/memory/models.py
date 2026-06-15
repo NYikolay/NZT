@@ -17,12 +17,12 @@ from sqlalchemy import (
     Index,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.dialects.postgresql import ARRAY
 from pgvector.sqlalchemy import VECTOR
 
 from src.core.base_model import Base
-from src.domain.users.models import User
+from src.core.base_mixins import UUIDMixin, TimestampMixin, IDMixin
 from src.domain.users.models_mixins import UserOwnedMixin
 
 
@@ -38,6 +38,23 @@ class EntityTypes(str, Enum):
     GOAL = "GOAL"
 
 
+class EntityRelationTypes(str, Enum):
+    WORKS_FOR = "WORKS_FOR"
+    FRIEND_OF = "FRIEND_OF"
+    ASSIGNED_TO = "ASSIGNED_TO"
+    MENTIONS = "MENTIONS"
+    DISCUSSED_WITH = "DISCUSSED_WITH"
+    RELATES_TO = "RELATES_TO"
+    CONTRADICTS = "CONTRADICTS"
+    PART_OF = "PART_OF"
+    OWNS = "OWNS"
+    LOCATED_AT = "LOCATED_AT"
+    LEADS = "LEADS"
+    CREATED_BY = "CREATED_BY"
+    SUPERSEDES = "SUPERSEDES"
+    UNKNOWN = "UNKNOWN"
+
+
 class EmbeddableType(str, Enum):
     """Типы сущностей, которые могут иметь эмбеддинги"""
 
@@ -45,7 +62,7 @@ class EmbeddableType(str, Enum):
     EVENTS = "events"
 
 
-class Event(Base, UserOwnedMixin):
+class Event(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "events"
 
     __table_args__ = {"comment": "Основная таблица событий."}
@@ -64,7 +81,7 @@ class Event(Base, UserOwnedMixin):
         doc="Насколько важно событие в жизни пользователя. 0, 25, 50, 70, 85, 95, 99",
     )
 
-    raw_message_id: Mapped[UUID] = mapped_column(
+    raw_message_id: Mapped[int] = mapped_column(
         ForeignKey("raw_messages.id", ondelete="CASCADE"), index=True
     )
     raw_message: Mapped["RawMessage"] = relationship(
@@ -76,21 +93,21 @@ class Event(Base, UserOwnedMixin):
     )
 
 
-class EventEntityRelation(Base):
+class EventEntityRelation(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "events_entities_relations"
 
     entity_id: Mapped[UUID] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"), index=True
+        ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True
     )
     event_id: Mapped[UUID] = mapped_column(
-        ForeignKey("events.id", ondelete="CASCADE"), index=True
+        ForeignKey("events.id", ondelete="CASCADE"), primary_key=True
     )
 
     entity: Mapped["Entity"] = relationship(back_populates="events_relations")
     event: Mapped["Event"] = relationship(back_populates="entities_relations")
 
 
-class Entity(Base, UserOwnedMixin):
+class Entity(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "entities"
 
     entity_type: Mapped[EntityTypes] = mapped_column(EntityTypes)
@@ -115,7 +132,7 @@ class Entity(Base, UserOwnedMixin):
         back_populates="entity"
     )
 
-    raw_message_id: Mapped[UUID] = mapped_column(
+    raw_message_id: Mapped[int] = mapped_column(
         ForeignKey("raw_messages.id", ondelete="CASCADE"), index=True
     )
     raw_message: Mapped["RawMessage"] = relationship(
@@ -123,7 +140,7 @@ class Entity(Base, UserOwnedMixin):
     )
 
 
-class RelationshipHistory(Base, UserOwnedMixin):
+class RelationshipHistory(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "relationships_history"
 
     from_entity_id: Mapped[UUID] = mapped_column(
@@ -172,7 +189,7 @@ class RelationshipHistory(Base, UserOwnedMixin):
     )
 
 
-class RawMessage(Base, UserOwnedMixin):
+class RawMessage(Base, IDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "raw_messages"
 
     content: Mapped[str] = relationship(Text)
@@ -181,31 +198,43 @@ class RawMessage(Base, UserOwnedMixin):
     entities: Mapped[List["Entity"]] = relationship(back_populates="raw_message")
 
 
-class Embedding(Base):
+class Embedding(Base, IDMixin, TimestampMixin):
     __tablename__ = "embeddings"
 
-    embeddable_id: Mapped[UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
+    embeddable_id: Mapped[UUID] = mapped_column(nullable=False)
+    embeddable_type: Mapped[EmbeddableType] = mapped_column(String(20))
+    embedding: Mapped[list[float]] = mapped_column(VECTOR(1536))
+
+    model_version: Mapped[str] = mapped_column(
+        String(50), doc="Версия модели: text-embedding-3-small, text-embedding-3-large"
     )
-    embeddable_type: Mapped[EmbeddableType] = mapped_column(String(20), index=True)
-    embedding: Mapped[list[float]] = mapped_column(VECTOR(1526))
+    model_provider: Mapped[str] = mapped_column(
+        String(50), doc="Провайдер: openai, cohere, huggingface"
+    )
 
-    model_version: Mapped[str] = mapped_column(String(50))  # "text-embedding-3-small"
-    model_provider: Mapped[str] = mapped_column(String(50))  # "openai"
-
-    chunk_index: Mapped[int | None] = mapped_column(nullable=True)
-    total_chunks: Mapped[int | None] = mapped_column(nullable=True)
+    chunk_index: Mapped[int | None] = mapped_column(
+        nullable=True, doc="Индекс чанка (0-based). NULL если не чанк"
+    )
+    total_chunks: Mapped[int | None] = mapped_column(
+        nullable=True, doc="Общее количество чанков. NULL если не чанк"
+    )
 
     __table_args__ = (
-        Index("ix_embeddings_embeddable", "embeddable_type", "embeddable_id"),
+        Index("ix_embeddings_lookup", "embeddable_type", "embeddable_id"),
         Index(
-            "idx_hnsw_embedding",
+            "ix_embeddings_vector",
             embedding,
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
-        Index("ix_embeddings_model", "model"),
+        Index("ix_embeddings_model", "model_provider", "model_version"),
     )
 
     def __repr__(self):
-        return f"<Embedding({self.embeddable_type}={self.embeddable_id[:8]}...)>"
+        return (
+            f"<Embedding("
+            f"type={self.embeddable_type}, "
+            f"id={self.embeddable_id[:8]}..., "
+            f"model={self.model_provider}/{self.model_version}"
+            f")>"
+        )

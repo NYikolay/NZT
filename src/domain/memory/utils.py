@@ -1,3 +1,55 @@
+import re
+
+from pydantic import BaseModel, Field, field_validator
+
+
+URL_PATTERN = re.compile(
+    r"^https?://"  # Только HTTP/HTTPS
+    r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|"  # domain
+    r"localhost|"  # localhost
+    r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"  # или IP
+    r"(?::\d+)?"  # порт
+    r"(?:/?|[/?]\S+)$",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+ENTITY_RELATIONS_EXTRACTION_PROMPT = """
+    You are extracting memory entities.
+
+    PERSON = specific human individual.
+    ORGANIZATION = collective actor.
+    PROJECT = effort being executed.
+    PRODUCT = thing used or delivered.
+    LOCATION = place.
+    ASSET = owned resource with value.
+    CONCEPT = abstract idea or field of knowledge.
+    IDENTITY = self-definition or life role.
+    GOAL = desired future outcome.
+
+    Rules:
+
+    PERSON vs IDENTITY:
+    - John → PERSON
+    - Founder → IDENTITY
+
+    ORGANIZATION vs PRODUCT:
+    - OpenAI → ORGANIZATION
+    - ChatGPT → PRODUCT
+
+    PROJECT vs GOAL:
+    - Build startup → PROJECT
+    - Reach $1M ARR → GOAL
+
+    CONCEPT vs PRODUCT:
+    - AI Agents → CONCEPT
+    - ChatGPT → PRODUCT
+
+    ASSET vs ORGANIZATION:
+    - OpenAI → ORGANIZATION
+    - OpenAI shares → ASSET
+"""
+
+
 SYSTEM_EXTRACTION_ENTITY_TYPE_CLASSIFICATION = """
 Classification rules:
 
