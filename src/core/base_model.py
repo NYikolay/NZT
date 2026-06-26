@@ -1,9 +1,5 @@
-from datetime import datetime, timezone
-from uuid import UUID, uuid4
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import func, DateTime
 from sqlalchemy.ext.asyncio import AsyncAttrs
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.schema import MetaData
 
 

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 
 class UUIDMixin:
-    """Миксин для UUID первичного ключа"""
+    """Mixin for the primary key UUID"""
 
     id: Mapped[UUID] = mapped_column(
         primary_key=True, default=uuid4, doc="Unique UUID primary key v4"
@@ -19,7 +19,7 @@ class IDMixin:
 
 
 class TimestampMixin:
-    """Миксин для временных меток"""
+    """Mixin for timestamps"""
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

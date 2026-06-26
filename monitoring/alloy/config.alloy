@@ -1,0 +1,81 @@
+// Grafana Alloy конфигурация для сбора логов из файлов
+// и отправки в Loki
+
+// Обнаружение файлов логов по glob-паттерну
+local.file_match "app_logs" {
+  path_targets = [
+    {__path__ = "/app/logs/*.log"},
+  ]
+}
+
+// Чтение логов из обнаруженных файлов
+loki.source.file "app_logs" {
+  targets    = local.file_match.app_logs.targets
+  forward_to = [loki.process.parse_json.receiver]
+}
+
+// Парсинг JSON логов
+loki.process "parse_json" {
+  forward_to = [loki.write.loki.receiver]
+
+  // Парсинг JSON структуры
+  stage.json {
+    expressions = {
+      level         = "",
+      event         = "",
+      method        = "",
+      path          = "",
+      status_code   = "",
+      duration_ms   = "",
+      request_id    = "",
+      user_id       = "",
+      error_type    = "",
+      error_message = "",
+    }
+  }
+
+  // Добавление статической метки job для идентификации источника
+  stage.static_labels {
+    values = {
+      job  = "nzt-backend",
+    }
+  }
+
+  // Извлечение меток из JSON полей
+  stage.labels {
+    values = {
+      level       = "",
+      method      = "",
+      path        = "",
+      request_id  = "",
+      user_id     = "",
+      error_type  = "",
+    }
+  }
+
+  // Форматирование временной метки
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339Nano"
+  }
+}
+
+// Отправка в Loki
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+
+  // Добавление меток
+  external_labels = {
+    cluster     = "nzt-backend",
+    environment = "development",
+    service     = "nzt-backend",
+  }
+}
+
+// Логирование ошибок Alloy
+logging {
+  level  = "info"
+  format = "json"
+}

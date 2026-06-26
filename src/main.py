@@ -1,14 +1,24 @@
+from src.api.exceptions import (
+    app_error_handler,
+    validation_exception_handler,
+    http_exception_handler,
+    unhandled_exception_handler,
+)
+from src.api.lifetime import lifespan
+from src.api.middlewares import RequestContextMiddleware
+from src.api.rate_limiter import InMemoryRateLimiter
 from src.core.config import settings
 
 from fastapi import FastAPI
-
-from sqlalchemy.ext.asyncio import AsyncEngine
-from src.api.lifetime import lifespan
-
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.api.routers import get_apps_router
+from src.domain.exceptions import BaseAppError
 
 
 def create_app(engine: AsyncEngine | None = None, **kwargs) -> FastAPI:
@@ -32,6 +42,8 @@ def create_app(engine: AsyncEngine | None = None, **kwargs) -> FastAPI:
         allow_headers=["*"],
         **kwargs,
     )
+    application.add_middleware(RequestContextMiddleware)
+    application.add_middleware(InMemoryRateLimiter)
 
     application.include_router(get_apps_router())
 
@@ -39,3 +51,8 @@ def create_app(engine: AsyncEngine | None = None, **kwargs) -> FastAPI:
 
 
 app = create_app()
+
+app.add_exception_handler(BaseAppError, app_error_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)

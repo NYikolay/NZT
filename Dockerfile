@@ -20,5 +20,5 @@ COPY --chown=appuser:appuser . .
 
 USER appuser
 
-CMD ["fastapi", "dev", "src/main.py", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["fastapi", "run", "src/main.py", "--host", "0.0.0.0", "--port", "8000"]
 # ---------------------------------------------------------------------------

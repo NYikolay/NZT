@@ -1,0 +1,162 @@
+# Unified Docker Compose with profiles.
+# Usage:
+#   Core only:    docker compose --profile core up -d
+#   With monitoring: docker compose --profile core --profile monitoring up -d
+#   Monitoring only: docker compose --profile monitoring up -d
+
+x-app: &default-app
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: "local"
+
+x-env: &env
+  env_file:
+    - .env
+
+services:
+  # ============================================================
+  # CORE SERVICES (profile: core)
+  # ============================================================
+  db:
+    <<: [*env]
+    profiles: ["core"]
+    build:
+      context: ./postgres-extensions-docker
+      dockerfile: Dockerfile
+      args:
+        POSTGRES_VERSION: "17"
+        TIMESCALEDB_VERSION: "2.18.0"
+        PGVECTOR_VERSION: "0.8.0"
+        AGE_VERSION: "1.5.0"
+    container_name: postgres-ext-dev
+    environment:
+      - POSTGRES_DB=${POSTGRES_NAME}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PGPORT=${POSTGRES_PORT}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    ports:
+      - 5432:${POSTGRES_PORT}
+    volumes:
+      - nzt_postgres_data:/var/lib/postgresql/data
+      - ./postgres-extensions-docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    shm_size: "256mb"
+    healthcheck:
+      test: pg_isready -d ${POSTGRES_NAME} -U ${POSTGRES_USER}
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nzt-backend-network
+
+  redis:
+    <<: [*env]
+    profiles: ["core"]
+    image: redis:7-alpine
+    container_name: nzt-backend-redis-dev
+    volumes:
+      - nzt_backend_redis_data:/var/lib/redis/data
+    healthcheck:
+      test: redis-cli ping
+      interval: 1s
+      timeout: 3s
+      retries: 50
+    networks:
+      - nzt-backend-network
+
+  app:
+    <<: [*env, *default-app]
+    profiles: ["core"]
+    container_name: nzt-backend-dev
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    networks:
+      - shared_network
+      - nzt-backend-network
+
+  # ============================================================
+  # MONITORING SERVICES (profile: monitoring)
+  # ============================================================
+  loki:
+    profiles: ["monitoring"]
+    image: grafana/loki:3.0.0
+    container_name: nzt-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki:/etc/loki
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.0.0
+    container_name: nzt-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      loki:
+        condition: service_started
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  alloy:
+    profiles: ["monitoring"]
+    image: grafana/alloy:v1.7.4
+    container_name: nzt-alloy
+    volumes:
+      - ./monitoring/alloy:/etc/alloy
+      - ./logs:/app/logs:ro
+    command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
+    depends_on:
+      loki:
+        condition: service_started
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+volumes:
+  nzt_postgres_data:
+  nzt_backend_redis_data:
+  loki_data:
+  grafana_data:
+
+networks:
+  shared_network:
+    external: true
+  nzt-backend-network:
+  monitoring-network:
+    driver: bridge

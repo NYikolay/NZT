@@ -1,11 +1,8 @@
 from enum import Enum
 import typing
-import hashlib
 from datetime import datetime, timezone
-from urllib.parse import urlparse, urlunparse
-from typing import List, Optional
-
-from src.core.base_model import Base
+from urllib.parse import urlparse
+from typing import List
 
 from sqlalchemy import (
     String,
@@ -17,8 +14,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.dialects.postgresql import JSON
 
+from src.core.base_model import Base
 from src.domain.users.models_mixins import UserOwnedMixin
-from src.core.base_mixins import UUIDMixin, TimestampMixin, IDMixin
+from src.core.base_mixins import UUIDMixin, TimestampMixin
 
 if typing.TYPE_CHECKING:
     from src.domain.memory.models import Event, RawMessage, Entity, RelationshipHistory
@@ -70,6 +68,7 @@ class User(Base, UUIDMixin, TimestampMixin):
     role: Mapped[UserRoles] = mapped_column(
         default=UserRoles.USER, doc="User role. Default is User"
     )
+    is_active: Mapped[bool] = mapped_column(default=False)
 
     events: Mapped[List["Event"]] = relationship(
         back_populates=DEFAULT_USER_RELATION_NAME,
@@ -117,12 +116,12 @@ class AuthIdentity(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "auth_identities"
 
     provider: Mapped[UserIdentitiesProviders]
-    provider_user_id: str
+    provider_user_id: Mapped[str]
     profile: Mapped[JSON] = mapped_column(JSON, default=lambda: {})
 
-    __table_args__ = {
-        UniqueConstraint("user_id", "provider_user_id", name="uq_user_provider")
-    }
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider_user_id", name="uq_user_provider"),
+    )
 
     def __repr__(self):
         return f"User {self.user_id} auth identity for provider: {self.provider}"

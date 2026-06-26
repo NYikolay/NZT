@@ -1,15 +1,13 @@
 from datetime import datetime, timezone
 from decimal import Decimal
-from enum import Enum, IntEnum
-from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from enum import Enum
+from typing import List, Optional
+from uuid import UUID
 
 from sqlalchemy import (
     ForeignKey,
     Text,
     String,
-    Enum,
-    Integer,
     DECIMAL,
     TIMESTAMP,
     func,
@@ -38,25 +36,25 @@ class EntityTypes(str, Enum):
     GOAL = "GOAL"
 
 
-class EntityRelationTypes(str, Enum):
-    WORKS_FOR = "WORKS_FOR"
-    FRIEND_OF = "FRIEND_OF"
-    ASSIGNED_TO = "ASSIGNED_TO"
-    MENTIONS = "MENTIONS"
-    DISCUSSED_WITH = "DISCUSSED_WITH"
-    RELATES_TO = "RELATES_TO"
-    CONTRADICTS = "CONTRADICTS"
-    PART_OF = "PART_OF"
-    OWNS = "OWNS"
-    LOCATED_AT = "LOCATED_AT"
-    LEADS = "LEADS"
-    CREATED_BY = "CREATED_BY"
-    SUPERSEDES = "SUPERSEDES"
-    UNKNOWN = "UNKNOWN"
+# class EntityRelationTypes(str, Enum):
+#     WORKS_FOR = "WORKS_FOR"
+#     FRIEND_OF = "FRIEND_OF"
+#     ASSIGNED_TO = "ASSIGNED_TO"
+#     MENTIONS = "MENTIONS"
+#     DISCUSSED_WITH = "DISCUSSED_WITH"
+#     RELATES_TO = "RELATES_TO"
+#     CONTRADICTS = "CONTRADICTS"
+#     PART_OF = "PART_OF"
+#     OWNS = "OWNS"
+#     LOCATED_AT = "LOCATED_AT"
+#     LEADS = "LEADS"
+#     CREATED_BY = "CREATED_BY"
+#     SUPERSEDES = "SUPERSEDES"
+#     UNKNOWN = "UNKNOWN"
 
 
 class EmbeddableType(str, Enum):
-    """Типы сущностей, которые могут иметь эмбеддинги"""
+    """Types of entities that can have embeddings"""
 
     ENTITIES = "entities"
     EVENTS = "events"
@@ -65,20 +63,16 @@ class EmbeddableType(str, Enum):
 class Event(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "events"
 
-    __table_args__ = {"comment": "Основная таблица событий."}
+    timestamp: Mapped[str | None] = mapped_column(
+        doc="The time of the event mentioned in the context"
+    )
 
-    timestamp: Mapped[datetime | None] = mapped_column(
-        doc="Упомянутое в контексте время события"
-    )
-    event_type: Mapped[str] = mapped_column(
-        String(65), doc="Тестовое поле, тип события: correction, task_create etc."
-    )
-    summary: Mapped[str] = mapped_column(
-        Text, doc="Небольшое описание события, сгенерированное LLM"
-    )
+    summary: Mapped[str] = mapped_column(Text, doc="A brief description of the event")
+
     importance_score: Mapped[Decimal] = mapped_column(
         DECIMAL(3, 0),
-        doc="Насколько важно событие в жизни пользователя. 0, 25, 50, 70, 85, 95, 99",
+        default=Decimal("0"),
+        doc="How important the event is in the user's life. 0, 25, 50, 70, 85, 95, 99",
     )
 
     raw_message_id: Mapped[int] = mapped_column(
@@ -91,6 +85,9 @@ class Event(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     entities_relations: Mapped[List["EventEntityRelation"]] = relationship(
         back_populates="event"
     )
+
+    def __repr__(self) -> str:
+        return f"Event of user - {self.user_id}: {self.summary}"
 
 
 class EventEntityRelation(Base, UUIDMixin, TimestampMixin):
@@ -106,15 +103,23 @@ class EventEntityRelation(Base, UUIDMixin, TimestampMixin):
     entity: Mapped["Entity"] = relationship(back_populates="events_relations")
     event: Mapped["Event"] = relationship(back_populates="entities_relations")
 
+    def __repr__(self) -> str:
+        return f"Entity: {self.entity_id} related to Event: {self.event_id}"
+
 
 class Entity(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "entities"
 
-    entity_type: Mapped[EntityTypes] = mapped_column(EntityTypes)
-    aliases: Mapped[List[str]] = mapped_column(ARRAY(String))
-    desctiption: Mapped[Optional[str]] = mapped_column(Text)
+    entity_type: Mapped[EntityTypes]
+    aliases: Mapped[List[str]] = mapped_column(
+        ARRAY(String), doc="List of Variants of the Entity Name "
+    )
+    description: Mapped[Optional[str]] = mapped_column(Text)
+
     importance_score: Mapped[Decimal] = mapped_column(
-        DECIMAL(3, 0), default=Decimal("0")
+        DECIMAL(3, 0),
+        default=Decimal("0"),
+        doc="How important the event is in the user's life. 0, 25, 50, 70, 85, 95, 99",
     )
 
     outgoing_relations: Mapped[List["RelationshipHistory"]] = relationship(
@@ -144,10 +149,14 @@ class RelationshipHistory(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "relationships_history"
 
     from_entity_id: Mapped[UUID] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"), index=True
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        index=True,
+        doc="All entities related to this entity",
     )
     to_entity_id: Mapped[UUID] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"), index=True
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        index=True,
+        doc="All entities to which this entity is related",
     )
 
     from_entity: Mapped["Entity"] = relationship(
@@ -159,15 +168,20 @@ class RelationshipHistory(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
         back_populates="incoming_relations",
     )
 
-    rel_type: Mapped[str] = mapped_column(String(125))
+    rel_type: Mapped[str] = mapped_column(
+        doc="A logical description of the relationship between entities. For example, WORKS_FOR",
+    )
 
     valid_from: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         server_default=func.now(),
+        doc="At what point does the concept become relevant in the context of the user's life?",
     )
     valid_to: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
+        TIMESTAMP(timezone=True),
+        nullable=True,
+        doc="Up to what point is the concept relevant in the context of the user's life?",
     )
 
     def __repr__(self):
@@ -184,7 +198,6 @@ class RelationshipHistory(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
             "valid_from",
             name="uq_relationship",
         ),
-        # Индекс для поиска действующих записей
         Index("ix_valid_period", "valid_from", "valid_to", postgresql_using="btree"),
     )
 
@@ -201,25 +214,31 @@ class RawMessage(Base, IDMixin, TimestampMixin, UserOwnedMixin):
 class Embedding(Base, IDMixin, TimestampMixin):
     __tablename__ = "embeddings"
 
-    embeddable_id: Mapped[UUID] = mapped_column(nullable=False)
+    embeddable_uuid: Mapped[UUID | None]
+    embeddable_id: Mapped[int | None]
     embeddable_type: Mapped[EmbeddableType] = mapped_column(String(20))
-    embedding: Mapped[list[float]] = mapped_column(VECTOR(1536))
+    embedding: Mapped[list[float | int]] = mapped_column(VECTOR(1536))
 
     model_version: Mapped[str] = mapped_column(
-        String(50), doc="Версия модели: text-embedding-3-small, text-embedding-3-large"
+        String(50), doc="Model version: text-embedding-3-small, text-embedding-3-large"
     )
     model_provider: Mapped[str] = mapped_column(
-        String(50), doc="Провайдер: openai, cohere, huggingface"
+        String(50), doc="Provider: OpenAI, Cohere, Hugging Face"
     )
 
     chunk_index: Mapped[int | None] = mapped_column(
-        nullable=True, doc="Индекс чанка (0-based). NULL если не чанк"
+        nullable=True, doc="Chunk index (0-based). NULL if not a chunk"
     )
     total_chunks: Mapped[int | None] = mapped_column(
-        nullable=True, doc="Общее количество чанков. NULL если не чанк"
+        nullable=True, doc="Total number of chunks. NULL if not a chunk"
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "(embeddable_uuid IS NOT NULL AND embeddable_id IS NULL) OR "
+            "(embeddable_uuid IS NULL AND embeddable_id IS NOT NULL)",
+            name="ck_exactly_one_id",
+        ),
         Index("ix_embeddings_lookup", "embeddable_type", "embeddable_id"),
         Index(
             "ix_embeddings_vector",
@@ -230,6 +249,20 @@ class Embedding(Base, IDMixin, TimestampMixin):
         Index("ix_embeddings_model", "model_provider", "model_version"),
     )
 
+    @validates("embeddable_uuid", "embeddable_id")
+    def validate_exclusive_fields(self, key: str, value: UUID | int):
+        if key == "embeddable_uuid" and value is not None:
+            if self.embeddable_id is not None:
+                raise ValueError(
+                    "Нельзя установить embeddable_uuid: embeddable_int_id уже заполнен"
+                )
+        if key == "embeddable_int_id" and value is not None:
+            if self.embeddable_uuid is not None:
+                raise ValueError(
+                    "Нельзя установить embeddable_int_id: embeddable_uuid уже заполнен"
+                )
+        return value
+
     def __repr__(self):
         return (
             f"<Embedding("
@@ -238,3 +271,9 @@ class Embedding(Base, IDMixin, TimestampMixin):
             f"model={self.model_provider}/{self.model_version}"
             f")>"
         )
+
+
+class EntityRelationType(Base, IDMixin, TimestampMixin):
+    __tablename__ = "entity_relation_types"
+
+    name: Mapped[str] = mapped_column(String(65))

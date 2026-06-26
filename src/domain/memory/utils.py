@@ -1,7 +1,5 @@
 import re
 
-from pydantic import BaseModel, Field, field_validator
-
 
 URL_PATTERN = re.compile(
     r"^https?://"  # Только HTTP/HTTPS
