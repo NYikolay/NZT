@@ -9,11 +9,13 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.exc import IntegrityError
 
+from src.api.exceptions import AuthenticationError
 from src.api.security import ALGORITHM
 from src.domain.users.models import User
 from src.core.config import settings
 from src.core.database import create_session_factory, UnitOfWork
 from src.domain.users.schemas import TelegramProviderTokenPayload
+from src.domain.users.services import UserService
 
 
 async def get_session_factory(
@@ -68,10 +70,12 @@ UowDep = Annotated[UnitOfWork, Depends(provide_uow)]
 async def get_current_user_tg_provider(
     session: SessionDep,
     authorization: Annotated[str, Header(description="Bearer {token}")],
-) -> TelegramProviderTokenPayload:
-    """Decode the JWT and return the matching User (or None if not found).
+) -> User:
+    """Decode the JWT and return the matching User model.
 
-    TODO: Implement actual User lookup once UserRepository exists.
+    If the user does not exist in the database, raises a 401 error
+    instructing the caller to register first via POST /auth/register
+    with a complete Telegram profile JWT.
     """
     try:
         token = authorization.split(" ")[1]
@@ -82,7 +86,17 @@ async def get_current_user_tg_provider(
             detail="Could not validate credentials",
         )
 
-    return TelegramProviderTokenPayload(**payload)
+    token_payload = TelegramProviderTokenPayload(**payload)
+
+    service = UserService(session=session)
+    user = await service.get_user_by_telegram_id(token_payload.telegram_id)
+
+    if user is None:
+        raise AuthenticationError(
+            message="User not registered. Call POST /auth/register with a complete Telegram profile JWT.",
+        )
+
+    return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user_tg_provider)]

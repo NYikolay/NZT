@@ -1,7 +1,7 @@
 """Shared fixtures for all tests."""
 
 from collections.abc import AsyncGenerator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -12,8 +12,9 @@ from src.main import create_app
 
 @pytest.fixture
 def app():
-    """Create a FastAPI app instance with no engine (in-memory testing)."""
+    """Create a FastAPI app instance with a mock engine (in-memory testing)."""
     application = create_app()
+    application.state.engine = MagicMock()
     return application
 
 

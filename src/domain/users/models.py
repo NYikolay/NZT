@@ -44,7 +44,7 @@ class ConnectionChannels(str, Enum):
     PHONE = "phone"
     WEB = "web"
     TELEGRAM = "telegram"
-    DESCTOP = "desctop"
+    DESKTOP = "desktop"
 
 
 class User(Base, UUIDMixin, TimestampMixin):
