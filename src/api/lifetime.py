@@ -1,10 +1,8 @@
 from contextlib import asynccontextmanager
 
-from sqlalchemy.ext.asyncio import create_async_engine
-
 from fastapi import FastAPI
 
-from src.core.config import settings
+from src.core.database import create_engine_from_settings
 
 
 @asynccontextmanager
@@ -12,9 +10,7 @@ async def lifespan(app: FastAPI):
     engine = getattr(app.state, "engine", None)
 
     if engine is None:
-        engine = create_async_engine(
-            url=str(settings.db.SQLALCHEMY_DATABASE_URI), echo=False
-        )
+        engine = create_engine_from_settings()
         app.state.engine = engine
 
     try:

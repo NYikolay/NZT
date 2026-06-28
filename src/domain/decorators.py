@@ -35,7 +35,6 @@ def log_domain_operation(operation_name: str | None = None) -> Callable:
                 )
                 return result
             except BaseAppError as e:
-                # Перебрасываем известные ошибки с обогащенным контекстом
                 logger.warning(
                     "domain_operation_failed",
                     operation=op_name,

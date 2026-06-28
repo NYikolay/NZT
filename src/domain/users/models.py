@@ -95,17 +95,13 @@ class User(Base, UUIDMixin, TimestampMixin):
     @validates("avatar_url")
     def validate_avatar_url(self, key: str, url: str):
         """Валидация URL"""
-        if not url:
-            raise ValueError("URL обязателен")
 
         value = url.strip()
         parsed = urlparse(value)
 
-        # Проверка протокола
         if parsed.scheme not in ("http", "https"):
             raise ValueError(f"Только http/https: {parsed.scheme}")
 
-        # Проверка хоста
         if not parsed.netloc:
             raise ValueError("URL должен содержать хост")
 

@@ -205,7 +205,7 @@ class RelationshipHistory(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
 class RawMessage(Base, IDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "raw_messages"
 
-    content: Mapped[str] = relationship(Text)
+    content: Mapped[str] = mapped_column(Text)
 
     events: Mapped[List["Event"]] = relationship(back_populates="raw_message")
     entities: Mapped[List["Entity"]] = relationship(back_populates="raw_message")
@@ -276,4 +276,55 @@ class Embedding(Base, IDMixin, TimestampMixin):
 class EntityRelationType(Base, IDMixin, TimestampMixin):
     __tablename__ = "entity_relation_types"
 
-    name: Mapped[str] = mapped_column(String(65))
+    name: Mapped[str] = mapped_column(String(65), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_preset: Mapped[bool] = mapped_column(default=False, server_default="false")
+    is_accepted: Mapped[bool] = mapped_column(default=False, server_default="false")
+
+    def __repr__(self) -> str:
+        return (
+            f"<EntityRelationType("
+            f"id={self.id}, "
+            f"name='{self.name}', "
+            f"preset={self.is_preset}, "
+            f"accepted={self.is_accepted}"
+            f")>"
+        )
+
+
+class EntityRelationTypeSuggestion(Base, IDMixin, TimestampMixin):
+    __tablename__ = "entity_relation_type_suggestions"
+
+    entity_relation_type_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_relation_types.id", ondelete="CASCADE"),
+        index=True,
+        doc="The suggested relation type",
+    )
+    raw_message_id: Mapped[int] = mapped_column(
+        ForeignKey("raw_messages.id", ondelete="CASCADE"),
+        index=True,
+        doc="The message that triggered this suggestion",
+    )
+    reasoning: Mapped[str | None] = mapped_column(
+        Text, nullable=True, doc="LLM's reasoning for suggesting this type"
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending", doc="pending | accepted | rejected"
+    )
+
+    relation_type: Mapped["EntityRelationType"] = relationship(
+        "EntityRelationType",
+        foreign_keys=[entity_relation_type_id],
+    )
+    raw_message: Mapped["RawMessage"] = relationship(
+        "RawMessage", foreign_keys=[raw_message_id]
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<EntityRelationTypeSuggestion("
+            f"id={self.id}, "
+            f"type_id={self.entity_relation_type_id}, "
+            f"status='{self.status}'"
+            f")>"
+        )
