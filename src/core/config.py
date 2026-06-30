@@ -65,6 +65,11 @@ class RedisSettings(BaseSettings):
     db: int
 
 
+class NatsSettings(BaseSettings):
+    host: str = "nats"
+    port: int = 4222
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables and .env file."""
 
@@ -116,6 +121,9 @@ class Settings(BaseSettings):
 
     redis: RedisSettings = RedisSettings(_env_prefix="redis_")
     """Redis connection settings."""
+
+    nats: NatsSettings = NatsSettings(_env_prefix="nats_")
+    """NATS connection settings."""
 
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     """Absolute path to the project root directory. Derived automatically."""

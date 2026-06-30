@@ -2,6 +2,7 @@ import jwt
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
+import structlog
 from fastapi import HTTPException, Request, status, Depends, Header
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
@@ -9,13 +10,17 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.exc import IntegrityError
 
+from taskiq import TaskiqDepends
+
 from src.api.exceptions import AuthenticationError
 from src.api.security import ALGORITHM
 from src.domain.users.models import User
 from src.core.config import settings
-from src.core.database import create_session_factory, UnitOfWork
+from src.core.database import create_session_factory
 from src.domain.users.schemas import TelegramProviderTokenPayload
 from src.domain.users.services import UserService
+
+logger = structlog.get_logger()
 
 
 async def get_session_factory(
@@ -28,13 +33,7 @@ async def get_session_factory(
 async def provide_transaction(
     request: Request,
 ) -> AsyncGenerator[AsyncSession, None]:
-    """Provide a session within a transaction boundary.
-
-    Uses the same implicit-transaction model as UnitOfWork: the session
-    starts a transaction on first SQL operation. On exception the
-    transaction is rolled back; the caller must explicitly call
-    ``await session.commit()`` to persist changes.
-    """
+    """Provide a session within a transaction boundary."""
     factory = create_session_factory(engine=request.app.state.engine)
     async with factory() as session:
         try:
@@ -47,24 +46,26 @@ async def provide_transaction(
             ) from exc
 
 
-async def provide_uow(
-    request: Request,
-) -> AsyncGenerator[UnitOfWork, None]:
-    """Provide a UnitOfWork bound to the app's engine.
-
-    Use this dependency in routes that need the full UoW interface
-    (e.g. when calling service-layer methods that expect a uow parameter).
-    """
+async def provide_transaction_taskiq(
+    request: Request = TaskiqDepends(),
+) -> AsyncGenerator[AsyncSession, None]:
+    """Provide a session within a TaskIQ transaction boundary."""
     factory = create_session_factory(engine=request.app.state.engine)
-    async with UnitOfWork(factory) as uow:
-        yield uow
+    async with factory() as session:
+        try:
+            yield session
+        except IntegrityError as exc:
+            await session.rollback()
+            logger.error(
+                "domain_operation_error",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                exc_info=True,
+            )
 
 
 SessionDep = Annotated[AsyncSession, Depends(provide_transaction)]
 """Dependency that injects an AsyncSession with implicit transaction management."""
-
-UowDep = Annotated[UnitOfWork, Depends(provide_uow)]
-"""Dependency that injects a UnitOfWork for service-layer integration."""
 
 
 async def get_current_user_tg_provider(

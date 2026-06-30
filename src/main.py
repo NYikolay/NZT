@@ -1,3 +1,4 @@
+from src.api.admin import setup_admin
 from src.api.exceptions import (
     app_error_handler,
     validation_exception_handler,
@@ -8,6 +9,7 @@ from src.api.lifetime import lifespan
 from src.api.middlewares import RequestContextMiddleware
 from src.api.rate_limiter import InMemoryRateLimiter
 from src.core.config import settings
+from src.core.database import create_engine_from_settings
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,8 +30,9 @@ def create_app(engine: AsyncEngine | None = None, **kwargs) -> FastAPI:
         lifespan=lifespan,
     )
 
-    if engine:
-        application.state.engine = engine
+    if engine is None:
+        engine = create_engine_from_settings()
+    application.state.engine = engine
 
     application.add_middleware(
         TrustedHostMiddleware, allowed_hosts=settings.all_hosts_origins
@@ -46,6 +49,8 @@ def create_app(engine: AsyncEngine | None = None, **kwargs) -> FastAPI:
     application.add_middleware(InMemoryRateLimiter)
 
     application.include_router(get_apps_router())
+
+    setup_admin(application, engine)
 
     application.add_exception_handler(BaseAppError, app_error_handler)
     application.add_exception_handler(

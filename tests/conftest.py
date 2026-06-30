@@ -13,8 +13,8 @@ from src.main import create_app
 @pytest.fixture
 def app():
     """Create a FastAPI app instance with a mock engine (in-memory testing)."""
-    application = create_app()
-    application.state.engine = MagicMock()
+    mock_engine = MagicMock()
+    application = create_app(engine=mock_engine)
     return application
 
 

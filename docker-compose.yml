@@ -14,6 +14,27 @@ x-env: &env
   env_file:
     - .env
 
+x-app-base: &app
+  <<: [*env, *default-app]  # Наследуем оба якоря
+  profiles: ["core"]
+  ports:
+    - "8000:8000"
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    nats:
+      condition: service_healthy
+  volumes:
+    - .:/app
+    - ./logs:/app/logs
+  environment:
+    - WATCHFILES_FORCE_POLLING=true
+  networks:
+    - shared_network
+    - nzt-backend-network
+
 services:
   # ============================================================
   # CORE SERVICES (profile: core)
@@ -50,6 +71,24 @@ services:
     networks:
       - nzt-backend-network
 
+  nats:
+    profiles: ["core"]
+    image: nats:2.10-alpine
+    container_name: nzt-backend-nats-dev
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nzt_backend_nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - nzt-backend-network
+
   redis:
     <<: [*env]
     profiles: ["core"]
@@ -65,23 +104,21 @@ services:
     networks:
       - nzt-backend-network
 
-  app:
-    <<: [*env, *default-app]
-    profiles: ["core"]
+  api:
+    <<: *app
     container_name: nzt-backend-dev
-    ports:
-      - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - .:/app
-      - ./logs:/app/logs
-    networks:
-      - shared_network
-      - nzt-backend-network
+
+  taskiq-worker:
+    <<: *app
+    container_name: nzt-backend-dev-tq-worker
+    ports: []
+    command: [ taskiq, worker, -fsd, src.core.tkq:broker, -w, "1", --max-fails, "1", "--tasks-pattern", "src/api/tasks/*_tasks.py"]
+
+  taskiq-scheduler:
+    <<: *app
+    container_name: nzt-backend-dev-tq-sched-worker
+    ports: []
+    command: [ taskiq, scheduler, -fsd, src.core.tkq:scheduler, "--tasks-pattern", "src/api/tasks/*_tasks.py"]
 
   # ============================================================
   # MONITORING SERVICES (profile: monitoring)
@@ -151,6 +188,7 @@ services:
 volumes:
   nzt_postgres_data:
   nzt_backend_redis_data:
+  nzt_backend_nats_data:
   loki_data:
   grafana_data:
 

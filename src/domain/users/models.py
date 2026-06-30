@@ -19,7 +19,13 @@ from src.domain.users.models_mixins import UserOwnedMixin
 from src.core.base_mixins import UUIDMixin, TimestampMixin
 
 if typing.TYPE_CHECKING:
-    from src.domain.memory.models import Event, RawMessage, Entity, RelationshipHistory
+    from src.domain.memory.models import (
+        Event,
+        RawMessage,
+        Entity,
+        RelationshipHistory,
+        EntityRelationTypeSuggestion,
+    )
 
 
 DEFAULT_USER_RELATION_NAME = "user"
@@ -87,6 +93,9 @@ class User(Base, UUIDMixin, TimestampMixin):
     )
     connection_channels: Mapped[List["ConnectionChannel"]] = relationship(
         back_populates=DEFAULT_USER_RELATION_NAME
+    )
+    entity_relation_type_suggestions: Mapped[List["EntityRelationTypeSuggestion"]] = (
+        relationship(back_populates=DEFAULT_USER_RELATION_NAME)
     )
 
     def __repr__(self):

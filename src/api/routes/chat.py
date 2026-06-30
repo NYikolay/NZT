@@ -1,8 +1,10 @@
 from fastapi import APIRouter
 
-from src.api.dependencies import CurrentUser
+from src import settings
+from src.api.dependencies import SessionDep
 from src.api.schemas.chat import ChatMessage
-from src.domain.llm.services import get_llm_response
+from src.domain.extraction.services import extract_data
+from src.api.tasks.echo_tasks import echo_task
 
 chat_router = APIRouter(
     prefix="/chat",
@@ -16,6 +18,21 @@ chat_router = APIRouter(
     summary="Send LLM message",
     response_model=ChatMessage,
 )
-async def send_chat_message(message: ChatMessage, user: CurrentUser):
-    answer = await get_llm_response(message.message)
-    return ChatMessage(message=answer)
+async def send_chat_message(message: ChatMessage, session: SessionDep):
+    await extract_data(
+        api_key=settings.OPEN_ROUTER_API_KEY,
+        message=message.message,
+        session=session,
+    )
+
+    return ChatMessage(message="asdasd")
+
+
+@chat_router.get(
+    "/check",
+    operation_id="Test",
+    summary="Test",
+)
+async def echo_check_test():
+    await echo_task.kiq(message="Hello world")
+    return "OK"

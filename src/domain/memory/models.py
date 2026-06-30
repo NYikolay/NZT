@@ -14,6 +14,7 @@ from sqlalchemy import (
     CheckConstraint,
     Index,
     UniqueConstraint,
+    DateTime,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -36,35 +37,50 @@ class EntityTypes(str, Enum):
     GOAL = "GOAL"
 
 
-# class EntityRelationTypes(str, Enum):
-#     WORKS_FOR = "WORKS_FOR"
-#     FRIEND_OF = "FRIEND_OF"
-#     ASSIGNED_TO = "ASSIGNED_TO"
-#     MENTIONS = "MENTIONS"
-#     DISCUSSED_WITH = "DISCUSSED_WITH"
-#     RELATES_TO = "RELATES_TO"
-#     CONTRADICTS = "CONTRADICTS"
-#     PART_OF = "PART_OF"
-#     OWNS = "OWNS"
-#     LOCATED_AT = "LOCATED_AT"
-#     LEADS = "LEADS"
-#     CREATED_BY = "CREATED_BY"
-#     SUPERSEDES = "SUPERSEDES"
-#     UNKNOWN = "UNKNOWN"
+class EntityRelationTypes(str, Enum):
+    WORKS_FOR = "WORKS_FOR"
+    FRIEND_OF = "FRIEND_OF"
+    ASSIGNED_TO = "ASSIGNED_TO"
+    MENTIONS = "MENTIONS"
+    DISCUSSED_WITH = "DISCUSSED_WITH"
+    RELATES_TO = "RELATES_TO"
+    CONTRADICTS = "CONTRADICTS"
+    PART_OF = "PART_OF"
+    OWNS = "OWNS"
+    LOCATED_AT = "LOCATED_AT"
+    LEADS = "LEADS"
+    CREATED_BY = "CREATED_BY"
+    SUPERSEDES = "SUPERSEDES"
+    UNKNOWN = "UNKNOWN"
+
+
+class SuggestionStatus(str, Enum):
+    """Status of an EntityRelationTypeSuggestion."""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
 
 
 class EmbeddableType(str, Enum):
-    """Types of entities that can have embeddings"""
+    """Types of entities that can have embeddings."""
 
     ENTITIES = "entities"
     EVENTS = "events"
 
 
+# ---------------------------------------------------------------------------
+# Event & EventEntityRelation
+# ---------------------------------------------------------------------------
+
+
 class Event(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "events"
 
-    timestamp: Mapped[str | None] = mapped_column(
-        doc="The time of the event mentioned in the context"
+    timestamp: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+        doc="The time of the event mentioned in the context",
     )
 
     summary: Mapped[str] = mapped_column(Text, doc="A brief description of the event")
@@ -86,11 +102,19 @@ class Event(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
         back_populates="event"
     )
 
+    __table_args__ = (
+        CheckConstraint(
+            "importance_score = ANY(ARRAY[0, 25, 50, 70, 85, 95, 99])",
+            name="ck_events_importance_score",
+        ),
+        Index("ix_events_user_timestamp", "user_id", "timestamp"),
+    )
+
     def __repr__(self) -> str:
         return f"Event of user - {self.user_id}: {self.summary}"
 
 
-class EventEntityRelation(Base, UUIDMixin, TimestampMixin):
+class EventEntityRelation(Base):
     __tablename__ = "events_entities_relations"
 
     entity_id: Mapped[UUID] = mapped_column(
@@ -100,6 +124,13 @@ class EventEntityRelation(Base, UUIDMixin, TimestampMixin):
         ForeignKey("events.id", ondelete="CASCADE"), primary_key=True
     )
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        doc="When this entity-event link was created",
+    )
+
     entity: Mapped["Entity"] = relationship(back_populates="events_relations")
     event: Mapped["Event"] = relationship(back_populates="entities_relations")
 
@@ -107,19 +138,34 @@ class EventEntityRelation(Base, UUIDMixin, TimestampMixin):
         return f"Entity: {self.entity_id} related to Event: {self.event_id}"
 
 
+# ---------------------------------------------------------------------------
+# Entity
+# ---------------------------------------------------------------------------
+
+
 class Entity(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "entities"
 
-    entity_type: Mapped[EntityTypes]
+    name: Mapped[str] = mapped_column(
+        String(255),
+        index=True,
+        doc="Canonical entity name (e.g., 'Alice', 'AcmeCorp')",
+    )
+    entity_type: Mapped[EntityTypes] = mapped_column(
+        index=True,
+        doc="Entity classification (PERSON, ORGANIZATION, etc.)",
+    )
     aliases: Mapped[List[str]] = mapped_column(
-        ARRAY(String), doc="List of Variants of the Entity Name "
+        ARRAY(String),
+        default=list,
+        doc="List of variant names / nicknames for this entity",
     )
     description: Mapped[Optional[str]] = mapped_column(Text)
 
     importance_score: Mapped[Decimal] = mapped_column(
         DECIMAL(3, 0),
         default=Decimal("0"),
-        doc="How important the event is in the user's life. 0, 25, 50, 70, 85, 95, 99",
+        doc="How important the entity is in the user's life. 0, 25, 50, 70, 85, 95, 99",
     )
 
     outgoing_relations: Mapped[List["RelationshipHistory"]] = relationship(
@@ -143,6 +189,22 @@ class Entity(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     raw_message: Mapped["RawMessage"] = relationship(
         "RawMessage", back_populates="entities"
     )
+
+    __table_args__ = (
+        CheckConstraint(
+            "importance_score = ANY(ARRAY[0, 25, 50, 70, 85, 95, 99])",
+            name="ck_entities_importance_score",
+        ),
+        Index("ix_entities_user_type", "user_id", "entity_type"),
+    )
+
+    def __repr__(self) -> str:
+        return f"Entity(id={self.id}, name='{self.name}', type={self.entity_type})"
+
+
+# ---------------------------------------------------------------------------
+# RelationshipHistory
+# ---------------------------------------------------------------------------
 
 
 class RelationshipHistory(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
@@ -169,6 +231,7 @@ class RelationshipHistory(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     )
 
     rel_type: Mapped[str] = mapped_column(
+        String(65),
         doc="A logical description of the relationship between entities. For example, WORKS_FOR",
     )
 
@@ -199,7 +262,14 @@ class RelationshipHistory(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
             name="uq_relationship",
         ),
         Index("ix_valid_period", "valid_from", "valid_to", postgresql_using="btree"),
+        Index("ix_relationships_from_to", "from_entity_id", "to_entity_id"),
+        Index("ix_relationships_rel_type", "rel_type"),
     )
+
+
+# ---------------------------------------------------------------------------
+# RawMessage
+# ---------------------------------------------------------------------------
 
 
 class RawMessage(Base, IDMixin, TimestampMixin, UserOwnedMixin):
@@ -210,17 +280,31 @@ class RawMessage(Base, IDMixin, TimestampMixin, UserOwnedMixin):
     events: Mapped[List["Event"]] = relationship(back_populates="raw_message")
     entities: Mapped[List["Entity"]] = relationship(back_populates="raw_message")
 
+    def __repr__(self):
+        return f"<RawMessage(id={self.id}, user_id={self.user_id})>"
+
+
+# ---------------------------------------------------------------------------
+# Embedding
+# ---------------------------------------------------------------------------
+
 
 class Embedding(Base, IDMixin, TimestampMixin):
     __tablename__ = "embeddings"
 
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        doc="User who owns this embedding",
+    )
     embeddable_uuid: Mapped[UUID | None]
     embeddable_id: Mapped[int | None]
     embeddable_type: Mapped[EmbeddableType] = mapped_column(String(20))
     embedding: Mapped[list[float | int]] = mapped_column(VECTOR(1536))
 
     model_version: Mapped[str] = mapped_column(
-        String(50), doc="Model version: text-embedding-3-small, text-embedding-3-large"
+        String(50),
+        doc="Model version: text-embedding-3-small, text-embedding-3-large",
     )
     model_provider: Mapped[str] = mapped_column(
         String(50), doc="Provider: OpenAI, Cohere, Hugging Face"
@@ -250,27 +334,37 @@ class Embedding(Base, IDMixin, TimestampMixin):
     )
 
     @validates("embeddable_uuid", "embeddable_id")
-    def validate_exclusive_fields(self, key: str, value: UUID | int):
+    def validate_exclusive_fields(self, key: str, value: UUID | int | None):
         if key == "embeddable_uuid" and value is not None:
             if self.embeddable_id is not None:
                 raise ValueError(
-                    "Нельзя установить embeddable_uuid: embeddable_int_id уже заполнен"
+                    "Cannot set embeddable_uuid: embeddable_id is already set"
                 )
-        if key == "embeddable_int_id" and value is not None:
+        if key == "embeddable_id" and value is not None:
             if self.embeddable_uuid is not None:
                 raise ValueError(
-                    "Нельзя установить embeddable_int_id: embeddable_uuid уже заполнен"
+                    "Cannot set embeddable_id: embeddable_uuid is already set"
                 )
         return value
 
     def __repr__(self):
+        id_str = (
+            str(self.embeddable_id)
+            if self.embeddable_id is not None
+            else str(self.embeddable_uuid)
+        )
         return (
             f"<Embedding("
             f"type={self.embeddable_type}, "
-            f"id={self.embeddable_id[:8]}..., "
+            f"id={id_str[:8]}..., "
             f"model={self.model_provider}/{self.model_version}"
             f")>"
         )
+
+
+# ---------------------------------------------------------------------------
+# EntityRelationType & Suggestion
+# ---------------------------------------------------------------------------
 
 
 class EntityRelationType(Base, IDMixin, TimestampMixin):
@@ -292,7 +386,7 @@ class EntityRelationType(Base, IDMixin, TimestampMixin):
         )
 
 
-class EntityRelationTypeSuggestion(Base, IDMixin, TimestampMixin):
+class EntityRelationTypeSuggestion(Base, IDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "entity_relation_type_suggestions"
 
     entity_relation_type_id: Mapped[int] = mapped_column(
@@ -308,8 +402,10 @@ class EntityRelationTypeSuggestion(Base, IDMixin, TimestampMixin):
     reasoning: Mapped[str | None] = mapped_column(
         Text, nullable=True, doc="LLM's reasoning for suggesting this type"
     )
-    status: Mapped[str] = mapped_column(
-        String(20), default="pending", doc="pending | accepted | rejected"
+    status: Mapped[SuggestionStatus] = mapped_column(
+        String(20),
+        default=SuggestionStatus.PENDING,
+        doc="pending | accepted | rejected",
     )
 
     relation_type: Mapped["EntityRelationType"] = relationship(
@@ -318,6 +414,14 @@ class EntityRelationTypeSuggestion(Base, IDMixin, TimestampMixin):
     )
     raw_message: Mapped["RawMessage"] = relationship(
         "RawMessage", foreign_keys=[raw_message_id]
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_entity_relation_type_suggestions_user_status",
+            "user_id",
+            "status",
+        ),
     )
 
     def __repr__(self) -> str:

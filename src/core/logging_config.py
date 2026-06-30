@@ -96,7 +96,6 @@ def configure_logging() -> structlog.BoundLogger:
     ]
 
     if log_format == "json":
-        # Структурированное JSON логирование для продакшена
         structlog.configure(
             processors=shared_processors
             + [
@@ -109,7 +108,6 @@ def configure_logging() -> structlog.BoundLogger:
             cache_logger_on_first_use=True,
         )
     else:
-        # Человекочитаемое логирование для разработки
         structlog.configure(
             processors=shared_processors + [structlog.dev.ConsoleRenderer(colors=True)],
             wrapper_class=structlog.stdlib.BoundLogger,
@@ -118,7 +116,6 @@ def configure_logging() -> structlog.BoundLogger:
             cache_logger_on_first_use=True,
         )
 
-    # Настройка ротации логов при записи в файл
     if "DAILY" in settings.LOG_ROTATION:
         file_handler = TimedRotatingFileHandler(
             log_file, when="midnight", interval=1, backupCount=30
@@ -138,5 +135,4 @@ def configure_logging() -> structlog.BoundLogger:
     return structlog.get_logger()
 
 
-# Глобальный логгер
 logger = configure_logging()
