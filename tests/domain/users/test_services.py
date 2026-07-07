@@ -65,7 +65,6 @@ class TestMapTelegramUserToCreate:
         assert isinstance(result, UserCreate)
         assert result.first_name == "John"
         assert result.username == "johndoe"
-        assert result.avatar_url == "https://t.me/johndoe"
         assert result.is_active is True
 
     def test_should_set_is_active_true(self, telegram_user):
@@ -86,7 +85,6 @@ class TestMapTelegramUserToCreate:
 
         assert result.first_name == "NoUsername"
         assert result.username is None
-        assert result.avatar_url == "https://t.me/nousername"
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +385,6 @@ class TestGetOrCreateUserFromTelegram:
                 id=user_id,
                 first_name=user_data.get("first_name"),
                 username=user_data.get("username"),
-                avatar_url=user_data.get("avatar_url"),
                 is_active=user_data.get("is_active", False),
                 role=UserRoles.USER,
             )
@@ -425,7 +422,6 @@ class TestGetOrCreateUserFromTelegram:
                 id=user_id,
                 first_name=user_data.get("first_name"),
                 username=user_data.get("username"),
-                avatar_url=user_data.get("avatar_url"),
                 is_active=user_data.get("is_active", False),
                 role=UserRoles.USER,
             )
@@ -468,7 +464,6 @@ class TestGetOrCreateUserFromTelegram:
                 id=user_id,
                 first_name=user_data.get("first_name"),
                 username=user_data.get("username"),
-                avatar_url=user_data.get("avatar_url"),
                 is_active=user_data.get("is_active", False),
                 role=UserRoles.USER,
             )
