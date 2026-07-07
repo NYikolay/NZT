@@ -1,10 +1,10 @@
 """Repositories for the memory domain — data access with AGE graph sync."""
 
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.memory.models import (
@@ -18,6 +18,7 @@ from src.domain.memory.models import (
     EntityRelationTypeSuggestion,
     EntityTypes,
     EmbeddableType,
+    RawMessageRoles,
 )
 
 logger = structlog.get_logger()
@@ -58,40 +59,16 @@ class EntityRepository:
         await self.session.flush()
         return entity
 
-    async def get_by_id(self, entity_id: UUID) -> Entity | None:
+    async def bulk_create(self, entities: List[dict]) -> List[Entity]:
+        stmt = insert(Entity).returning(Entity)
+        result = await self.session.execute(stmt, entities)
+        created_entities = list(result.scalars().all())
+        await self.session.flush()
+
+        return created_entities
+
+    async def get_by_id(self, entity_id: UUID) -> type[Entity] | None:
         return await self.session.get(Entity, entity_id)
-
-    async def get_by_name_and_user(self, name: str, user_id: UUID) -> Entity | None:
-        stmt = select(Entity).where(
-            and_(Entity.name == name, Entity.user_id == user_id)
-        )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def find_by_alias(self, alias: str, user_id: UUID) -> list[Entity]:
-        """Find entities whose aliases array contains the given alias."""
-        stmt = select(Entity).where(
-            and_(
-                Entity.user_id == user_id,
-                Entity.aliases.any(alias),
-            )
-        )
-        result = await self.session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def list_by_user(
-        self,
-        user_id: UUID,
-        entity_type: EntityTypes | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[Entity]:
-        stmt = select(Entity).where(Entity.user_id == user_id)
-        if entity_type is not None:
-            stmt = stmt.where(Entity.entity_type == entity_type)
-        stmt = stmt.order_by(Entity.name).limit(limit).offset(offset)
-        result = await self.session.execute(stmt)
-        return list(result.scalars().all())
 
     async def update(self, entity: Entity, **fields) -> Entity:
         for key, value in fields.items():
@@ -170,6 +147,20 @@ class EventRepository:
         await self.session.flush()
         return relation
 
+    async def bulk_create(self, events: List[dict]) -> List[Event]:
+        stmt = insert(Event).returning(Event)
+        result = await self.session.execute(stmt, events)
+        created_events = list(result.scalars().all())
+        await self.session.flush()
+        return created_events
+
+    async def bulk_link_entities(self, links: List[dict]) -> List[EventEntityRelation]:
+        stmt = insert(EventEntityRelation).returning(EventEntityRelation)
+        result = await self.session.execute(stmt, links)
+        created_links = list(result.scalars().all())
+        await self.session.flush()
+        return created_links
+
 
 # ---------------------------------------------------------------------------
 # RelationshipHistoryRepository
@@ -202,6 +193,13 @@ class RelationshipHistoryRepository:
         )
         self.session.add(relationship)
         return relationship
+
+    async def bulk_create(self, relationships: List[dict]) -> List[RelationshipHistory]:
+        stmt = insert(RelationshipHistory).returning(RelationshipHistory)
+        result = await self.session.execute(stmt, relationships)
+        created_relationships = list(result.scalars().all())
+        await self.session.flush()
+        return created_relationships
 
     async def find_by_entity(self, entity_id: UUID) -> list[RelationshipHistory]:
         """Find all relationships involving this entity (inbound + outbound)."""
@@ -245,8 +243,10 @@ class RawMessageRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, *, content: str, user_id: UUID) -> RawMessage:
-        message = RawMessage(content=content, user_id=user_id)
+    async def create(
+        self, *, content: str, user_id: UUID, role: RawMessageRoles
+    ) -> RawMessage:
+        message = RawMessage(content=content, user_id=user_id, role=role)
         self.session.add(message)
         await self.session.flush()
         return message
@@ -310,6 +310,26 @@ class EmbeddingRepository:
         await self.session.flush()
         return emb
 
+    async def bulk_create(self, embeddings: List[dict]) -> List[Embedding]:
+        """Create multiple Embedding records at once.
+
+        Each dict must contain:
+        - embeddable_uuid / embeddable_id (mutually exclusive)
+        - embeddable_type
+        - embedding
+        - model_version
+        - model_provider
+        - user_id
+        - chunk_index (optional)
+        - total_chunks (optional)
+        """
+        stmt = insert(Embedding).returning(Embedding)
+        result = await self.session.execute(stmt, embeddings)
+        created_embeddings = list(result.scalars().all())
+        await self.session.flush()
+
+        return created_embeddings
+
     async def search_similar(
         self,
         *,
@@ -317,8 +337,8 @@ class EmbeddingRepository:
         embeddable_type: EmbeddableType | None = None,
         user_id: UUID,
         limit: int = 10,
-        threshold: float = 0.7,
-    ) -> list[tuple[Embedding, float]]:
+        threshold: float = 0.5,
+    ) -> list[Embedding]:
         """Find similar embeddings using cosine distance.
 
         Returns a list of (Embedding, similarity_score) tuples ordered by
@@ -340,10 +360,10 @@ class EmbeddingRepository:
         )
 
         if embeddable_type is not None:
-            stmt = stmt.where(Embedding.embeddable_type == embeddable_type)
+            stmt = stmt.where(Embedding.embeddable_type.in_([embeddable_type]))
 
         result = await self.session.execute(stmt)
-        return [(row[0], row[1]) for row in result.all()]
+        return result.all()
 
     async def delete_by_embeddable(
         self,
@@ -392,6 +412,31 @@ class EntityRelationTypeRepository:
         self.session.add(t)
         await self.session.flush()
         return t
+
+    async def bulk_create_types(
+        self, rel_types: List[dict]
+    ) -> List[EntityRelationType]:
+        stmt = insert(EntityRelationType).returning()
+
+        result = await self.session.execute(stmt, rel_types)
+
+        created_rel_types = result.scalars().all()
+        await self.session.flush()
+
+        return created_rel_types
+
+    async def bulk_create_suggestions(
+        self, suggestion_rel_types: List[dict]
+    ) -> List[EntityRelationType]:
+        stmt = insert(EntityRelationTypeSuggestion).returning()
+
+        result = await self.session.execute(stmt, suggestion_rel_types)
+
+        created_rel_types = result.scalars().all()
+
+        await self.session.flush()
+
+        return created_rel_types
 
     async def get_by_name(self, name: str) -> EntityRelationType | None:
         stmt = select(EntityRelationType).where(EntityRelationType.name == name.upper())

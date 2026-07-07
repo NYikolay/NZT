@@ -7,7 +7,7 @@ from fastapi import HTTPException, Request, status, Depends, Header
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from taskiq import TaskiqDepends
@@ -23,13 +23,6 @@ from src.domain.users.services import UserService
 logger = structlog.get_logger()
 
 
-async def get_session_factory(
-    request: Request,
-) -> async_sessionmaker[AsyncSession]:
-    """Provide a session factory bound to the app's engine."""
-    return create_session_factory(engine=request.app.state.engine)
-
-
 async def provide_transaction(
     request: Request,
 ) -> AsyncGenerator[AsyncSession, None]:
@@ -37,7 +30,8 @@ async def provide_transaction(
     factory = create_session_factory(engine=request.app.state.engine)
     async with factory() as session:
         try:
-            yield session
+            async with session.begin():
+                yield session
         except IntegrityError as exc:
             await session.rollback()
             raise HTTPException(
@@ -53,7 +47,8 @@ async def provide_transaction_taskiq(
     factory = create_session_factory(engine=request.app.state.engine)
     async with factory() as session:
         try:
-            yield session
+            async with session.begin():
+                yield session
         except IntegrityError as exc:
             await session.rollback()
             logger.error(
@@ -71,7 +66,7 @@ SessionDep = Annotated[AsyncSession, Depends(provide_transaction)]
 async def get_current_user_tg_provider(
     session: SessionDep,
     authorization: Annotated[str, Header(description="Bearer {token}")],
-) -> User:
+) -> type[User]:
     """Decode the JWT and return the matching User model.
 
     If the user does not exist in the database, raises a 401 error

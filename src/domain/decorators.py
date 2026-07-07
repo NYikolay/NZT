@@ -7,7 +7,7 @@ import structlog
 
 from src.domain.exceptions import BaseAppError
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 def log_domain_operation(operation_name: str | None = None) -> Callable:
@@ -35,7 +35,7 @@ def log_domain_operation(operation_name: str | None = None) -> Callable:
                 )
                 return result
             except BaseAppError as e:
-                logger.warning(
+                logger.error(
                     "domain_operation_failed",
                     operation=op_name,
                     error_code=e.error_code,
@@ -74,7 +74,7 @@ def log_domain_operation(operation_name: str | None = None) -> Callable:
                 return result
 
             except BaseAppError as e:
-                logger.warning(
+                logger.error(
                     "domain_operation_failed",
                     operation=op_name,
                     error_code=e.error_code,

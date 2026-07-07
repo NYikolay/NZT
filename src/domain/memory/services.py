@@ -1,6 +1,6 @@
 """Services for the memory domain."""
 
-from typing import Literal
+from typing import Literal, List
 from uuid import UUID
 
 import structlog
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.decorators import log_domain_operation
 from src.domain.exceptions import EntityNotFoundError
+from src.domain.extraction.schemas import ExtractedEntityRelationTypeSuggestion
 from src.domain.memory.models import (
     Entity,
     Event,
@@ -18,12 +19,19 @@ from src.domain.memory.models import (
     RelationshipHistory,
     EntityTypes,
     SuggestionStatus,
+    RawMessageRoles,
 )
 from src.domain.memory.repositories import (
     EntityRepository,
     EventRepository,
     RelationshipHistoryRepository,
     EntityRelationTypeRepository,
+    RawMessageRepository,
+)
+from src.domain.memory.schemas import (
+    EntityRelationTypeCreate,
+    EntityRelationTypeSuggestionCreate,
+    RawMessageResponse,
 )
 
 logger = structlog.get_logger()
@@ -34,6 +42,23 @@ DEFAULT_FALLBACK_TYPE_NAME = "RELATES_TO"
 # ---------------------------------------------------------------------------
 # EntityService
 # ---------------------------------------------------------------------------
+
+
+class RawMessageService:
+    def __init__(self, session: AsyncSession, user_id: UUID):
+        self.session = session
+        self._repo = RawMessageRepository(session=session)
+        self._user_id = user_id
+
+    @log_domain_operation("create_raw_message")
+    async def create_raw_message(
+        self, content: str, role: RawMessageRoles
+    ) -> RawMessageResponse:
+        raw_message_model = await self._repo.create(
+            content=content, user_id=self._user_id, role=role
+        )
+
+        return RawMessageResponse.model_validate(raw_message_model)
 
 
 class EntityService:
@@ -264,6 +289,34 @@ class EntityRelationTypeService:
             )
 
         return await self._get_fallback_type()
+
+    @log_domain_operation("bulk_create_extracted_relation_types")
+    async def bulk_create_extracted_relation_types(
+        self,
+        suggested_rel_types: List[ExtractedEntityRelationTypeSuggestion],
+        source_message_id: int,
+    ):
+        rel_types_to_insert = [
+            EntityRelationTypeCreate(
+                name=ext_rel_type.name, description=ext_rel_type.description
+            ).model_dump()
+            for ext_rel_type in suggested_rel_types
+        ]
+
+        created_rel_types = await self._repo.bulk_create_types(rel_types_to_insert)
+        rel_types_by_name = {rel.name: rel for rel in created_rel_types}
+
+        suggestions_to_insert = [
+            EntityRelationTypeSuggestionCreate(
+                entity_relation_type_id=rel_type.id,
+                raw_message_id=source_message_id,
+                reasoning=suggestion.reasoning,
+            ).model_dump()
+            for suggestion in suggested_rel_types
+            if (rel_type := rel_types_by_name.get(suggestion.name)) is not None
+        ]
+
+        await self._repo.bulk_create_suggestions(suggestions_to_insert)
 
     @log_domain_operation("record_suggestion")
     async def record_suggestion(

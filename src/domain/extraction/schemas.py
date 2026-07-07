@@ -50,9 +50,12 @@ class ExtractedEntitySchema(BaseModel):
     )
     entity_type: EntityTypes = Field(
         description=(
-            "Entity classification (PERSON, ORGANIZATION, etc.). "
-            "Very important, use only types from the examples of this field. "
+            "Entity classification. Very important, use only types from the examples of this field. "
             "Don't make anything up and don't create new types."
+            "NARRATOR — the person from whose perspective the story is told (not the author). For example: “I saw,” “I’ll tell you.”"
+            "PERSON — a person or a fictional character with a name. For example: “Pushkin,” “Harry Potter.” Not to be confused with IDENTITY."
+            "ORGANIZATION — a company, institution, political party, or group with a name. For example: “Gazprom,” “Moscow State University,” “The Beatles.”"
+            ""
         ),
         examples=[item.value for item in EntityTypes],
     )
@@ -116,7 +119,7 @@ class ExtractedEntityRelation(BaseModel):
     )
 
 
-class EntityRelationTypeSuggestion(BaseModel):
+class ExtractedEntityRelationTypeSuggestion(BaseModel):
     name: str = Field(description="Name of new entity type")
     description: str = Field(description="Short description of new entity type")
     reasoning: str = Field(description="LLM's reasoning for suggesting this type")
@@ -133,4 +136,4 @@ class LLMExtractionResult(BaseModel):
         ),
     )
     entities: list[ExtractedEntitySchema] | None = None
-    suggestions: list[EntityRelationTypeSuggestion] | None = None
+    suggestions: list[ExtractedEntityRelationTypeSuggestion] | None = None

@@ -41,6 +41,7 @@ class EntityResponse(BaseModel):
     user_id: UUID
     created_at: datetime
     updated_at: datetime
+    canonical_text: str
 
     model_config = {"from_attributes": True}
 
@@ -151,3 +152,19 @@ class EmbeddingSearchResult(BaseModel):
     embeddable_id: int | None
     embeddable_type: EmbeddableType
     similarity: float
+
+
+# ---------------------------------------------------------------------------
+# Entity Relation Types
+# ---------------------------------------------------------------------------
+
+
+class EntityRelationTypeCreate(BaseModel):
+    name: str
+    description: str
+
+
+class EntityRelationTypeSuggestionCreate(BaseModel):
+    entity_relation_type_id: int
+    raw_message_id: int
+    reasoning: str

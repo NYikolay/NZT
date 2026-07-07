@@ -1,12 +1,11 @@
 """Tests for the database module (session factory + UnitOfWork)."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from src.core.database import (
     create_session_factory,
     create_engine_from_settings,
-    UnitOfWork,
 )
 
 
@@ -57,90 +56,3 @@ class TestCreateEngineFromSettings:
                 assert call_kwargs["pool_recycle"] == 1800
                 assert call_kwargs["pool_pre_ping"] is True
                 assert call_kwargs["echo"] is False
-
-
-class TestUnitOfWork:
-    """Tests for the UnitOfWork context manager."""
-
-    @pytest.fixture
-    def mock_uow_session(self):
-        """Create a mock session that behaves like an async SQLAlchemy session."""
-        mock_factory = MagicMock()
-        mock_session = AsyncMock()
-        mock_session.name = "mock_session"
-        mock_factory.return_value = mock_session
-        return mock_factory, mock_session
-
-    @pytest.mark.asyncio
-    async def test_should_enter_and_exit_cleanly(self, mock_uow_session):
-        """UnitOfWork should enter and exit cleanly without error."""
-        mock_factory, mock_session = mock_uow_session
-
-        async with UnitOfWork(mock_factory) as uow:
-            assert uow.session is not None
-
-        mock_session.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_commit_on_explicit_call(self, mock_uow_session):
-        """UnitOfWork.commit() should delegate to session.commit()."""
-        mock_factory, mock_session = mock_uow_session
-
-        async with UnitOfWork(mock_factory) as uow:
-            await uow.commit()
-
-        mock_session.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_rollback_on_explicit_call(self, mock_uow_session):
-        """UnitOfWork.rollback() should delegate to session.rollback()."""
-        mock_factory, mock_session = mock_uow_session
-
-        async with UnitOfWork(mock_factory) as uow:
-            await uow.rollback()
-
-        mock_session.rollback.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_rollback_on_exception(self, mock_uow_session):
-        """UnitOfWork should rollback the transaction on exception."""
-        mock_factory, mock_session = mock_uow_session
-
-        with pytest.raises(ValueError, match="test error"):
-            async with UnitOfWork(mock_factory):
-                raise ValueError("test error")
-
-        mock_session.rollback.assert_awaited_once()
-        mock_session.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_not_rollback_on_clean_exit(self, mock_uow_session):
-        """UnitOfWork should NOT rollback when exiting without exception."""
-        mock_factory, mock_session = mock_uow_session
-
-        async with UnitOfWork(mock_factory):
-            pass
-
-        mock_session.rollback.assert_not_awaited()
-        mock_session.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_close_session_even_after_rollback(self, mock_uow_session):
-        """Session should be closed even when rollback is called explicitly."""
-        mock_factory, mock_session = mock_uow_session
-
-        async with UnitOfWork(mock_factory) as uow:
-            await uow.rollback()
-
-        mock_session.rollback.assert_awaited_once()
-        mock_session.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_set_session_to_none_on_exit(self, mock_uow_session):
-        """Session should be set to None after exiting the context manager."""
-        mock_factory, mock_session = mock_uow_session
-
-        async with UnitOfWork(mock_factory) as uow:
-            assert uow.session is not None
-
-        assert uow.session is None

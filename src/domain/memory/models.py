@@ -26,6 +26,7 @@ from src.domain.users.models_mixins import UserOwnedMixin
 
 
 class EntityTypes(str, Enum):
+    NARRATOR = "NARRATOR"
     PERSON = "PERSON"
     ORGANIZATION = "ORGANIZATION"
     PROJECT = "PROJECT"
@@ -35,6 +36,8 @@ class EntityTypes(str, Enum):
     CONCEPT = "CONCEPT"
     IDENTITY = "IDENTITY"
     GOAL = "GOAL"
+    QUANTITY = "QUANTITY"
+    LAW = "LAW"
 
 
 class EntityRelationTypes(str, Enum):
@@ -62,11 +65,19 @@ class SuggestionStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class RawMessageRoles(str, Enum):
+    """Roles for storing chat with llm. Llm response is assistant, user message is role - user"""
+
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
 class EmbeddableType(str, Enum):
     """Types of entities that can have embeddings."""
 
-    ENTITIES = "entities"
-    EVENTS = "events"
+    ENTITIES = "entity"
+    EVENTS = "event"
+    RAW_MESSAGE = "raw_message"
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +212,15 @@ class Entity(Base, UUIDMixin, TimestampMixin, UserOwnedMixin):
     def __repr__(self) -> str:
         return f"Entity(id={self.id}, name='{self.name}', type={self.entity_type})"
 
+    @property
+    def canonical_text(self) -> str:
+        parts = [f"{self.entity_type}: {self.name}, {', '.join(self.aliases)}"]
+
+        if self.description:
+            parts.append(self.description)
+
+        return ". ".join(parts)
+
 
 # ---------------------------------------------------------------------------
 # RelationshipHistory
@@ -276,12 +296,17 @@ class RawMessage(Base, IDMixin, TimestampMixin, UserOwnedMixin):
     __tablename__ = "raw_messages"
 
     content: Mapped[str] = mapped_column(Text)
+    role: Mapped[RawMessageRoles] = mapped_column(String(15), doc="")
 
     events: Mapped[List["Event"]] = relationship(back_populates="raw_message")
     entities: Mapped[List["Entity"]] = relationship(back_populates="raw_message")
 
     def __repr__(self):
         return f"<RawMessage(id={self.id}, user_id={self.user_id})>"
+
+    __table_args__ = (
+        Index("idx_raw_messages_user_timestamp", "user_id", "created_at"),
+    )
 
 
 # ---------------------------------------------------------------------------

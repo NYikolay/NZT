@@ -20,7 +20,7 @@ class UserRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_id(self, user_id: UUID) -> User | None:
+    async def get_by_id(self, user_id: UUID) -> type[User] | None:
         return await self.session.get(User, user_id)
 
     async def get_by_username(self, username: str) -> User | None:
@@ -31,7 +31,9 @@ class UserRepository:
     async def create(self, user_data: dict) -> User:
         user = User(**user_data)
         self.session.add(user)
+
         await self.session.flush()
+
         return user
 
     async def update(self, user: User, update_data: dict) -> User:

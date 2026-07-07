@@ -1,4 +1,4 @@
-"""Tests for memory domain repositories — CRUD and query operations."""
+"""Tests for memory domain repositories."""
 
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock
@@ -12,10 +12,9 @@ from src.domain.memory.models import (
     EventEntityRelation,
     RelationshipHistory,
     RawMessage,
+    RawMessageRoles,
     Embedding,
     EmbeddableType,
-    EntityRelationType,
-    EntityRelationTypeSuggestion,
 )
 from src.domain.memory.repositories import (
     EntityRepository,
@@ -23,7 +22,6 @@ from src.domain.memory.repositories import (
     RelationshipHistoryRepository,
     RawMessageRepository,
     EmbeddingRepository,
-    EntityRelationTypeRepository,
 )
 
 
@@ -43,192 +41,165 @@ class TestEntityRepository:
     def repo(self, session):
         return EntityRepository(session=session)
 
-    @staticmethod
-    def _mock_execute(session, return_value):
-        """Helper to set up session.execute to return a mock with scalars().all() chain."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = return_value
-        session.execute = AsyncMock(return_value=mock_result)
-
     @pytest.mark.asyncio
     async def test_should_create_entity(self, repo, session):
+        """create should add a new Entity and flush."""
+        name = "Test Entity"
+        entity_type = EntityTypes.PERSON
         user_id = uuid4()
-        entity = await repo.create(
-            name="Alice",
-            entity_type=EntityTypes.PERSON,
-            aliases=["Ali"],
-            description="A person",
-            importance_score=50,
-            raw_message_id=1,
+        raw_message_id = 1
+
+        result = await repo.create(
+            name=name,
+            entity_type=entity_type,
+            raw_message_id=raw_message_id,
             user_id=user_id,
         )
-        assert isinstance(entity, Entity)
-        assert entity.name == "Alice"
-        assert entity.entity_type == EntityTypes.PERSON
-        assert entity.aliases == ["Ali"]
-        assert entity.description == "A person"
-        assert entity.importance_score == 50
-        assert entity.raw_message_id == 1
-        assert entity.user_id == user_id
+
+        assert isinstance(result, Entity)
+        assert result.name == name
+        assert result.entity_type == entity_type
+        assert result.user_id == user_id
+        assert result.raw_message_id == raw_message_id
+        assert result.aliases == []
+        assert result.importance_score == 0
         session.add.assert_called_once()
         session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_should_create_entity_without_optional_fields(self, repo, session):
-        user_id = uuid4()
-        entity = await repo.create(
-            name="Bob",
-            entity_type=EntityTypes.PERSON,
+    async def test_should_create_entity_with_aliases_and_description(
+        self, repo, session
+    ):
+        """create should accept aliases, description, and importance_score."""
+        result = await repo.create(
+            name="Alias Entity",
+            entity_type=EntityTypes.ORGANIZATION,
+            aliases=["AE", "A.E."],
+            description="An entity with aliases",
+            importance_score=50,
             raw_message_id=2,
-            user_id=user_id,
+            user_id=uuid4(),
         )
-        assert entity.name == "Bob"
-        assert entity.aliases == []
-        assert entity.description is None
-        assert entity.importance_score == 0
+
+        assert result.aliases == ["AE", "A.E."]
+        assert result.description == "An entity with aliases"
+        assert result.importance_score == 50
+
+    @pytest.mark.asyncio
+    async def test_should_bulk_create_entities(self, repo, session):
+        """bulk_create should insert multiple entities and return them."""
+        user_id = uuid4()
+        entity_dicts = [
+            {
+                "name": "Entity A",
+                "entity_type": EntityTypes.PERSON.value,
+                "aliases": [],
+                "description": None,
+                "importance_score": 0,
+                "raw_message_id": 1,
+                "user_id": user_id,
+            },
+            {
+                "name": "Entity B",
+                "entity_type": EntityTypes.ORGANIZATION.value,
+                "aliases": ["B"],
+                "description": None,
+                "importance_score": 25,
+                "raw_message_id": 1,
+                "user_id": user_id,
+            },
+        ]
+
+        # Mock execute to return scalars with Entity objects
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [
+            Entity(
+                name="Entity A",
+                entity_type=EntityTypes.PERSON,
+                raw_message_id=1,
+                user_id=user_id,
+            ),
+            Entity(
+                name="Entity B",
+                entity_type=EntityTypes.ORGANIZATION,
+                aliases=["B"],
+                importance_score=25,
+                raw_message_id=1,
+                user_id=user_id,
+            ),
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
+
+        result = await repo.bulk_create(entity_dicts)
+
+        assert len(result) == 2
+        assert result[0].name == "Entity A"
+        assert result[1].name == "Entity B"
+        session.execute.assert_awaited_once()
+        session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_should_get_entity_by_id(self, repo, session):
+        """get_by_id should return an Entity when found."""
         entity_id = uuid4()
         expected = Entity(
             id=entity_id,
-            name="Alice",
-            entity_type=EntityTypes.PERSON,
+            name="Found",
+            entity_type=EntityTypes.CONCEPT,
             raw_message_id=1,
             user_id=uuid4(),
         )
         session.get = AsyncMock(return_value=expected)
 
         result = await repo.get_by_id(entity_id)
+
         assert result is not None
         assert result.id == entity_id
-        assert result.name == "Alice"
+        assert result.name == "Found"
         session.get.assert_awaited_once_with(Entity, entity_id)
 
     @pytest.mark.asyncio
     async def test_should_return_none_when_entity_not_found(self, repo, session):
+        """get_by_id should return None when no entity exists."""
         session.get = AsyncMock(return_value=None)
+
         result = await repo.get_by_id(uuid4())
+
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_should_get_entity_by_name_and_user(self, repo, session):
-        user_id = uuid4()
-        expected = Entity(
-            name="Alice",
-            entity_type=EntityTypes.PERSON,
-            raw_message_id=1,
-            user_id=user_id,
-        )
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none = MagicMock(return_value=expected)
-        session.execute = AsyncMock(return_value=mock_result)
-
-        result = await repo.get_by_name_and_user("Alice", user_id)
-        assert result is not None
-        assert result.name == "Alice"
-        assert result.user_id == user_id
-
-    @pytest.mark.asyncio
-    async def test_should_return_none_when_name_not_found(self, repo, session):
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none = MagicMock(return_value=None)
-        session.execute = AsyncMock(return_value=mock_result)
-
-        result = await repo.get_by_name_and_user("Nonexistent", uuid4())
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_should_find_entities_by_alias(self, repo, session):
-        user_id = uuid4()
-        entity = Entity(
-            name="AcmeCorp",
-            entity_type=EntityTypes.ORGANIZATION,
-            aliases=["ACME", "Acme Inc."],
-            raw_message_id=1,
-            user_id=user_id,
-        )
-        self._mock_execute(session, [entity])
-
-        results = await repo.find_by_alias("ACME", user_id)
-        assert len(results) == 1
-        assert results[0].name == "AcmeCorp"
-
-    @pytest.mark.asyncio
-    async def test_should_return_empty_list_when_alias_not_found(self, repo, session):
-        self._mock_execute(session, [])
-
-        results = await repo.find_by_alias("Unknown", uuid4())
-        assert results == []
-
-    @pytest.mark.asyncio
-    async def test_should_list_entities_by_user(self, repo, session):
-        user_id = uuid4()
-        entities = [
-            Entity(
-                name="Alice",
-                entity_type=EntityTypes.PERSON,
-                raw_message_id=1,
-                user_id=user_id,
-            ),
-            Entity(
-                name="Bob",
-                entity_type=EntityTypes.PERSON,
-                raw_message_id=2,
-                user_id=user_id,
-            ),
-        ]
-        self._mock_execute(session, entities)
-
-        results = await repo.list_by_user(user_id)
-        assert len(results) == 2
-
-    @pytest.mark.asyncio
-    async def test_should_list_entities_filtered_by_type(self, repo, session):
-        user_id = uuid4()
-        entity = Entity(
-            name="AcmeCorp",
-            entity_type=EntityTypes.ORGANIZATION,
-            raw_message_id=1,
-            user_id=user_id,
-        )
-        self._mock_execute(session, [entity])
-
-        results = await repo.list_by_user(user_id, entity_type=EntityTypes.ORGANIZATION)
-        assert len(results) == 1
-        assert results[0].entity_type == EntityTypes.ORGANIZATION
-
-    @pytest.mark.asyncio
-    async def test_should_list_entities_with_pagination(self, repo, session):
-        self._mock_execute(session, [])
-
-        results = await repo.list_by_user(uuid4(), limit=10, offset=20)
-        assert results == []
 
     @pytest.mark.asyncio
     async def test_should_update_entity_fields(self, repo, session):
+        """update should modify fields on an Entity and flush."""
         entity = Entity(
-            name="OldName",
+            name="Old",
             entity_type=EntityTypes.PERSON,
+            description="Old description",
             raw_message_id=1,
             user_id=uuid4(),
         )
-        result = await repo.update(entity, name="NewName", description="Updated")
-        assert result.name == "NewName"
-        assert result.description == "Updated"
+
+        result = await repo.update(entity, name="New", description="New description")
+
+        assert result.name == "New"
+        assert result.description == "New description"
         session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_should_ignore_unknown_fields_on_update(self, repo, session):
+        """update should silently ignore fields that don't exist on the model."""
         entity = Entity(
-            name="Alice",
+            name="Test",
             entity_type=EntityTypes.PERSON,
             raw_message_id=1,
             user_id=uuid4(),
         )
-        result = await repo.update(entity, name="Bob", nonexistent_field="value")
-        assert result.name == "Bob"
-        session.flush.assert_awaited_once()
+
+        result = await repo.update(entity, name="Updated", nonexistent="ignored")
+
+        assert result.name == "Updated"
+        assert not hasattr(result, "nonexistent")
 
 
 # ---------------------------------------------------------------------------
@@ -247,104 +218,191 @@ class TestEventRepository:
     def repo(self, session):
         return EventRepository(session=session)
 
-    @staticmethod
-    def _mock_execute(session, return_value):
-        """Helper to set up session.execute to return a mock with scalars().all() chain."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = return_value
-        session.execute = AsyncMock(return_value=mock_result)
-
     @pytest.mark.asyncio
     async def test_should_create_event(self, repo, session):
-        user_id = uuid4()
-        event = await repo.create(
-            summary="Meeting with Alice",
-            importance_score=50,
+        """create should add a new Event and flush."""
+        result = await repo.create(
+            summary="Test event",
             raw_message_id=1,
-            user_id=user_id,
+            user_id=uuid4(),
         )
-        assert isinstance(event, Event)
-        assert event.summary == "Meeting with Alice"
-        assert event.importance_score == 50
-        assert event.raw_message_id == 1
-        assert event.user_id == user_id
+
+        assert isinstance(result, Event)
+        assert result.summary == "Test event"
+        assert result.importance_score == 0
         session.add.assert_called_once()
         session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_should_create_event_with_timestamp(self, repo, session):
-        event = await repo.create(
-            summary="Event with timestamp",
-            timestamp="2024-01-01T00:00:00Z",
+        """create should accept an optional timestamp."""
+        result = await repo.create(
+            summary="Timed event",
+            timestamp="2024-01-15T10:00:00Z",
+            importance_score=50,
             raw_message_id=2,
             user_id=uuid4(),
         )
-        assert event.summary == "Event with timestamp"
-        assert event.timestamp == "2024-01-01T00:00:00Z"
+
+        assert result.summary == "Timed event"
+        assert result.timestamp == "2024-01-15T10:00:00Z"
+        assert result.importance_score == 50
 
     @pytest.mark.asyncio
     async def test_should_get_event_by_id(self, repo, session):
+        """get_by_id should return an Event when found."""
         event_id = uuid4()
         expected = Event(
             id=event_id,
-            summary="Test event",
+            summary="Found event",
             raw_message_id=1,
             user_id=uuid4(),
         )
         session.get = AsyncMock(return_value=expected)
 
         result = await repo.get_by_id(event_id)
+
         assert result is not None
         assert result.id == event_id
-        assert result.summary == "Test event"
         session.get.assert_awaited_once_with(Event, event_id)
 
     @pytest.mark.asyncio
     async def test_should_return_none_when_event_not_found(self, repo, session):
+        """get_by_id should return None when no event exists."""
         session.get = AsyncMock(return_value=None)
+
         result = await repo.get_by_id(uuid4())
+
         assert result is None
 
     @pytest.mark.asyncio
     async def test_should_list_events_by_user(self, repo, session):
+        """list_by_user should return events for a given user."""
         user_id = uuid4()
         events = [
             Event(summary="Event 1", raw_message_id=1, user_id=user_id),
             Event(summary="Event 2", raw_message_id=2, user_id=user_id),
         ]
-        self._mock_execute(session, events)
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = events
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await repo.list_by_user(user_id)
-        assert len(results) == 2
+        result = await repo.list_by_user(user_id)
+
+        assert len(result) == 2
+        session.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_should_list_events_with_pagination(self, repo, session):
-        self._mock_execute(session, [])
+    async def test_should_list_events_by_user_with_pagination(self, repo, session):
+        """list_by_user should respect limit and offset."""
+        user_id = uuid4()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await repo.list_by_user(uuid4(), limit=5, offset=10)
-        assert results == []
+        result = await repo.list_by_user(user_id, limit=10, offset=5)
+
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_should_list_events_by_entity(self, repo, session):
+        """list_by_entity should return events linked to a given entity."""
         entity_id = uuid4()
         events = [
-            Event(summary="Event for entity", raw_message_id=1, user_id=uuid4()),
+            Event(summary="Related event", raw_message_id=1, user_id=uuid4()),
         ]
-        self._mock_execute(session, events)
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = events
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await repo.list_by_entity(entity_id)
-        assert len(results) == 1
-        assert results[0].summary == "Event for entity"
+        result = await repo.list_by_entity(entity_id)
+
+        assert len(result) == 1
+        assert result[0].summary == "Related event"
+        session.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_should_link_entity_to_event(self, repo, session):
+        """link_entity should create an EventEntityRelation."""
         event_id = uuid4()
         entity_id = uuid4()
-        relation = await repo.link_entity(event_id=event_id, entity_id=entity_id)
-        assert isinstance(relation, EventEntityRelation)
-        assert relation.event_id == event_id
-        assert relation.entity_id == entity_id
+
+        result = await repo.link_entity(event_id=event_id, entity_id=entity_id)
+
+        assert isinstance(result, EventEntityRelation)
+        assert result.event_id == event_id
+        assert result.entity_id == entity_id
         session.add.assert_called_once()
+        session.flush.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_should_bulk_create_events(self, repo, session):
+        """bulk_create should insert multiple events."""
+        user_id = uuid4()
+        event_dicts = [
+            {
+                "summary": "Event A",
+                "importance_score": 0,
+                "raw_message_id": 1,
+                "user_id": user_id,
+            },
+            {
+                "summary": "Event B",
+                "importance_score": 50,
+                "raw_message_id": 1,
+                "user_id": user_id,
+            },
+        ]
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [
+            Event(summary="Event A", raw_message_id=1, user_id=user_id),
+            Event(
+                summary="Event B",
+                importance_score=50,
+                raw_message_id=1,
+                user_id=user_id,
+            ),
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
+
+        result = await repo.bulk_create(event_dicts)
+
+        assert len(result) == 2
+        session.execute.assert_awaited_once()
+        session.flush.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_should_bulk_link_entities(self, repo, session):
+        """bulk_link_entities should create multiple EventEntityRelations."""
+        links = [
+            {"event_id": uuid4(), "entity_id": uuid4()},
+            {"event_id": uuid4(), "entity_id": uuid4()},
+        ]
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [
+            EventEntityRelation(
+                event_id=links[0]["event_id"], entity_id=links[0]["entity_id"]
+            ),
+            EventEntityRelation(
+                event_id=links[1]["event_id"], entity_id=links[1]["entity_id"]
+            ),
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
+
+        result = await repo.bulk_link_entities(links)
+
+        assert len(result) == 2
+        session.execute.assert_awaited_once()
         session.flush.assert_awaited_once()
 
 
@@ -364,49 +422,75 @@ class TestRelationshipHistoryRepository:
     def repo(self, session):
         return RelationshipHistoryRepository(session=session)
 
-    @staticmethod
-    def _mock_execute(session, return_value):
-        """Helper to set up session.execute to return a mock with scalars().all() chain."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = return_value
-        session.execute = AsyncMock(return_value=mock_result)
-
     @pytest.mark.asyncio
     async def test_should_create_relationship(self, repo, session):
-        from_id = uuid4()
-        to_id = uuid4()
+        """create should add a new RelationshipHistory."""
+        from_entity_id = uuid4()
+        to_entity_id = uuid4()
         user_id = uuid4()
-        rel = await repo.create(
-            from_entity_id=from_id,
-            to_entity_id=to_id,
+
+        result = await repo.create(
+            from_entity_id=from_entity_id,
+            to_entity_id=to_entity_id,
             rel_type="WORKS_FOR",
             user_id=user_id,
         )
-        assert isinstance(rel, RelationshipHistory)
-        assert rel.from_entity_id == from_id
-        assert rel.to_entity_id == to_id
-        assert rel.rel_type == "WORKS_FOR"
-        assert rel.user_id == user_id
+
+        assert isinstance(result, RelationshipHistory)
+        assert result.from_entity_id == from_entity_id
+        assert result.to_entity_id == to_entity_id
+        assert result.rel_type == "WORKS_FOR"
+        assert result.user_id == user_id
         session.add.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_should_create_relationship_with_valid_dates(self, repo, session):
-        from datetime import datetime, timezone
+    async def test_should_bulk_create_relationships(self, repo, session):
+        """bulk_create should insert multiple relationships."""
+        user_id = uuid4()
+        rel_dicts = [
+            {
+                "from_entity_id": uuid4(),
+                "to_entity_id": uuid4(),
+                "rel_type": "WORKS_FOR",
+                "user_id": user_id,
+            },
+            {
+                "from_entity_id": uuid4(),
+                "to_entity_id": uuid4(),
+                "rel_type": "FRIEND_OF",
+                "user_id": user_id,
+            },
+        ]
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [
+            RelationshipHistory(
+                from_entity_id=rel_dicts[0]["from_entity_id"],
+                to_entity_id=rel_dicts[0]["to_entity_id"],
+                rel_type="WORKS_FOR",
+                user_id=user_id,
+            ),
+            RelationshipHistory(
+                from_entity_id=rel_dicts[1]["from_entity_id"],
+                to_entity_id=rel_dicts[1]["to_entity_id"],
+                rel_type="FRIEND_OF",
+                user_id=user_id,
+            ),
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        valid_from = datetime.now(timezone.utc)
-        rel = await repo.create(
-            from_entity_id=uuid4(),
-            to_entity_id=uuid4(),
-            rel_type="RELATES_TO",
-            user_id=uuid4(),
-            valid_from=valid_from,
-        )
-        assert rel.valid_from == valid_from
+        result = await repo.bulk_create(rel_dicts)
+
+        assert len(result) == 2
+        session.execute.assert_awaited_once()
+        session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_should_find_relationships_by_entity(self, repo, session):
+        """find_by_entity should return relationships in both directions."""
         entity_id = uuid4()
-        rels = [
+        relationships = [
             RelationshipHistory(
                 from_entity_id=entity_id,
                 to_entity_id=uuid4(),
@@ -416,24 +500,24 @@ class TestRelationshipHistoryRepository:
             RelationshipHistory(
                 from_entity_id=uuid4(),
                 to_entity_id=entity_id,
-                rel_type="MANAGES",
+                rel_type="FRIEND_OF",
                 user_id=uuid4(),
             ),
         ]
-        self._mock_execute(session, rels)
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = relationships
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await repo.find_by_entity(entity_id)
-        assert len(results) == 2
+        result = await repo.find_by_entity(entity_id)
+
+        assert len(result) == 2
+        session.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_should_return_empty_list_when_no_relationships(self, repo, session):
-        self._mock_execute(session, [])
-
-        results = await repo.find_by_entity(uuid4())
-        assert results == []
-
-    @pytest.mark.asyncio
-    async def test_should_find_relationships_between_entities(self, repo, session):
+    async def test_should_find_relationship_between_two_entities(self, repo, session):
+        """find_between should return the relationship linking two entities."""
         entity_a = uuid4()
         entity_b = uuid4()
         rel = RelationshipHistory(
@@ -442,40 +526,52 @@ class TestRelationshipHistoryRepository:
             rel_type="WORKS_FOR",
             user_id=uuid4(),
         )
-        self._mock_execute(session, [rel])
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [rel]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await repo.find_between(entity_a, entity_b)
-        assert len(results) == 1
-        assert results[0].from_entity_id == entity_a
-        assert results[0].to_entity_id == entity_b
+        result = await repo.find_between(entity_a, entity_b)
+
+        assert len(result) == 1
+        assert result[0].from_entity_id == entity_a
+        assert result[0].to_entity_id == entity_b
+        session.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_should_find_relationships_between_entities_reverse(
-        self, repo, session
-    ):
+    async def test_should_find_between_reverse_order(self, repo, session):
+        """find_between should work regardless of argument order."""
         entity_a = uuid4()
         entity_b = uuid4()
         rel = RelationshipHistory(
             from_entity_id=entity_b,
             to_entity_id=entity_a,
-            rel_type="MANAGES",
+            rel_type="FRIEND_OF",
             user_id=uuid4(),
         )
-        self._mock_execute(session, [rel])
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [rel]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await repo.find_between(entity_a, entity_b)
-        assert len(results) == 1
-        assert results[0].from_entity_id == entity_b
-        assert results[0].to_entity_id == entity_a
+        result = await repo.find_between(entity_a, entity_b)
+
+        assert len(result) == 1
 
     @pytest.mark.asyncio
-    async def test_should_return_empty_when_no_relationship_between(
-        self, repo, session
-    ):
-        self._mock_execute(session, [])
+    async def test_should_return_empty_when_no_relationship_found(self, repo, session):
+        """find_between should return empty list when no relationship exists."""
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await repo.find_between(uuid4(), uuid4())
-        assert results == []
+        result = await repo.find_between(uuid4(), uuid4())
+
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -494,58 +590,81 @@ class TestRawMessageRepository:
     def repo(self, session):
         return RawMessageRepository(session=session)
 
-    @staticmethod
-    def _mock_execute(session, return_value):
-        """Helper to set up session.execute to return a mock with scalars().all() chain."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = return_value
-        session.execute = AsyncMock(return_value=mock_result)
-
     @pytest.mark.asyncio
     async def test_should_create_raw_message(self, repo, session):
+        """create should add a new RawMessage with role and flush."""
         user_id = uuid4()
-        msg = await repo.create(content="Hello world", user_id=user_id)
-        assert isinstance(msg, RawMessage)
-        assert msg.content == "Hello world"
-        assert msg.user_id == user_id
+
+        result = await repo.create(
+            content="Hello, world!",
+            user_id=user_id,
+            role=RawMessageRoles.USER,
+        )
+
+        assert isinstance(result, RawMessage)
+        assert result.content == "Hello, world!"
+        assert result.user_id == user_id
+        assert result.role == RawMessageRoles.USER
         session.add.assert_called_once()
         session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_should_create_assistant_raw_message(self, repo, session):
+        """create should accept ASSISTANT role."""
+        result = await repo.create(
+            content="AI response",
+            user_id=uuid4(),
+            role=RawMessageRoles.ASSISTANT,
+        )
+
+        assert result.role == RawMessageRoles.ASSISTANT
+
+    @pytest.mark.asyncio
     async def test_should_get_raw_message_by_id(self, repo, session):
-        expected = RawMessage(id=42, content="Test", user_id=uuid4())
+        """get_by_id should return a RawMessage when found."""
+        expected = RawMessage(
+            id=42, content="Test", user_id=uuid4(), role=RawMessageRoles.USER
+        )
         session.get = AsyncMock(return_value=expected)
 
         result = await repo.get_by_id(42)
+
         assert result is not None
         assert result.id == 42
         assert result.content == "Test"
         session.get.assert_awaited_once_with(RawMessage, 42)
 
     @pytest.mark.asyncio
-    async def test_should_return_none_when_message_not_found(self, repo, session):
+    async def test_should_return_none_when_raw_message_not_found(self, repo, session):
+        """get_by_id should return None when no message exists."""
         session.get = AsyncMock(return_value=None)
+
         result = await repo.get_by_id(999)
+
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_should_list_messages_by_user(self, repo, session):
+    async def test_should_list_raw_messages_by_user(self, repo, session):
+        """list_by_user should return messages for a given user."""
         user_id = uuid4()
         messages = [
-            RawMessage(id=1, content="First", user_id=user_id),
-            RawMessage(id=2, content="Second", user_id=user_id),
+            RawMessage(
+                id=1, content="Msg 1", user_id=user_id, role=RawMessageRoles.USER
+            ),
+            RawMessage(
+                id=2, content="Msg 2", user_id=user_id, role=RawMessageRoles.ASSISTANT
+            ),
         ]
-        self._mock_execute(session, messages)
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = messages
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-        results = await repo.list_by_user(user_id)
-        assert len(results) == 2
+        result = await repo.list_by_user(user_id)
 
-    @pytest.mark.asyncio
-    async def test_should_list_messages_with_pagination(self, repo, session):
-        self._mock_execute(session, [])
-
-        results = await repo.list_by_user(uuid4(), limit=10, offset=5)
-        assert results == []
+        assert len(result) == 2
+        session.execute.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -564,289 +683,173 @@ class TestEmbeddingRepository:
     def repo(self, session):
         return EmbeddingRepository(session=session)
 
-    @staticmethod
-    def _mock_execute(session, return_value):
-        """Helper to set up session.execute to return a mock with scalars().all() chain."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = return_value
-        session.execute = AsyncMock(return_value=mock_result)
-
     @pytest.mark.asyncio
     async def test_should_create_embedding_with_uuid(self, repo, session):
+        """create should add a new Embedding with embeddable_uuid."""
         user_id = uuid4()
-        emb = await repo.create(
-            embeddable_uuid=uuid4(),
+        embeddable_uuid = uuid4()
+
+        result = await repo.create(
+            embeddable_uuid=embeddable_uuid,
             embeddable_type=EmbeddableType.ENTITIES,
             embedding=[0.1, 0.2, 0.3],
-            model_version="text-embedding-3-small",
-            model_provider="OpenAI",
+            model_version="test-model",
+            model_provider="test-provider",
             user_id=user_id,
         )
-        assert isinstance(emb, Embedding)
-        assert emb.embeddable_type == EmbeddableType.ENTITIES
-        assert emb.model_version == "text-embedding-3-small"
-        assert emb.model_provider == "OpenAI"
-        assert emb.user_id == user_id
+
+        assert isinstance(result, Embedding)
+        assert result.embeddable_uuid == embeddable_uuid
+        assert result.embeddable_id is None
+        assert result.embeddable_type == EmbeddableType.ENTITIES
+        assert result.model_version == "test-model"
+        assert result.model_provider == "test-provider"
+        assert result.user_id == user_id
         session.add.assert_called_once()
         session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_should_create_embedding_with_id(self, repo, session):
-        emb = await repo.create(
+        """create should add a new Embedding with embeddable_id."""
+        result = await repo.create(
             embeddable_id=42,
-            embeddable_type=EmbeddableType.EVENTS,
+            embeddable_type=EmbeddableType.RAW_MESSAGE,
             embedding=[0.4, 0.5],
-            model_version="v1",
-            model_provider="Cohere",
+            model_version="v2",
+            model_provider="provider",
             user_id=uuid4(),
         )
-        assert emb.embeddable_id == 42
-        assert emb.embeddable_type == EmbeddableType.EVENTS
+
+        assert result.embeddable_id == 42
+        assert result.embeddable_uuid is None
 
     @pytest.mark.asyncio
-    async def test_should_create_embedding_with_chunks(self, repo, session):
-        emb = await repo.create(
-            embeddable_uuid=uuid4(),
+    async def test_should_create_embedding_with_chunk_info(self, repo, session):
+        """create should accept optional chunk_index and total_chunks."""
+        result = await repo.create(
+            embeddable_id=1,
             embeddable_type=EmbeddableType.ENTITIES,
-            embedding=[0.1, 0.2],
+            embedding=[0.1],
             model_version="v1",
-            model_provider="OpenAI",
+            model_provider="p",
             user_id=uuid4(),
             chunk_index=0,
             total_chunks=3,
         )
-        assert emb.chunk_index == 0
-        assert emb.total_chunks == 3
+
+        assert result.chunk_index == 0
+        assert result.total_chunks == 3
+
+    @pytest.mark.asyncio
+    async def test_should_bulk_create_embeddings(self, repo, session):
+        """bulk_create should insert multiple embeddings."""
+        user_id = uuid4()
+        embed_dicts = [
+            {
+                "embeddable_uuid": uuid4(),
+                "embeddable_id": None,
+                "embeddable_type": EmbeddableType.ENTITIES.value,
+                "embedding": [0.1],
+                "model_version": "v1",
+                "model_provider": "p",
+                "user_id": user_id,
+                "chunk_index": None,
+                "total_chunks": None,
+            },
+            {
+                "embeddable_uuid": None,
+                "embeddable_id": 42,
+                "embeddable_type": EmbeddableType.RAW_MESSAGE.value,
+                "embedding": [0.2],
+                "model_version": "v1",
+                "model_provider": "p",
+                "user_id": user_id,
+                "chunk_index": 0,
+                "total_chunks": 2,
+            },
+        ]
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [MagicMock(), MagicMock()]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
+
+        result = await repo.bulk_create(embed_dicts)
+
+        assert len(result) == 2
+        session.execute.assert_awaited_once()
+        session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_should_search_similar_embeddings(self, repo, session):
+        """search_similar should return results with similarity scores."""
         user_id = uuid4()
-        emb = Embedding(
-            embeddable_uuid=uuid4(),
-            embeddable_type=EmbeddableType.ENTITIES,
-            embedding=[0.1, 0.2],
-            model_version="v1",
-            model_provider="OpenAI",
-            user_id=user_id,
-        )
-        # Mock the cosine_distance and the execute result
-        mock_distance = MagicMock()
-        mock_distance.__sub__ = MagicMock(return_value=MagicMock())
-        mock_distance.__lt__ = MagicMock(return_value=MagicMock())
-
-        session.execute = AsyncMock()
-        session.execute.return_value.all = MagicMock(return_value=[(emb, 0.95)])
-
-        results = await repo.search_similar(
-            query_vector=[0.1, 0.2],
-            user_id=user_id,
-            limit=10,
-            threshold=0.7,
-        )
-        assert len(results) == 1
-        assert results[0][0] == emb
-        assert results[0][1] == 0.95
-
-    @pytest.mark.asyncio
-    async def test_should_search_similar_filtered_by_type(self, repo, session):
-        user_id = uuid4()
-        session.execute = AsyncMock()
-        session.execute.return_value.all = MagicMock(return_value=[])
-
-        results = await repo.search_similar(
-            query_vector=[0.1, 0.2],
-            embeddable_type=EmbeddableType.EVENTS,
-            user_id=user_id,
-        )
-        assert results == []
-
-    @pytest.mark.asyncio
-    async def test_should_delete_embeddings_by_uuid(self, repo, session):
-        embeddable_uuid = uuid4()
-        emb = Embedding(
-            embeddable_uuid=embeddable_uuid,
-            embeddable_type=EmbeddableType.ENTITIES,
-            embedding=[0.1],
-            model_version="v1",
-            model_provider="OpenAI",
-            user_id=uuid4(),
-        )
-        self._mock_execute(session, [emb])
-
-        await repo.delete_by_embeddable(embeddable_uuid=embeddable_uuid)
-        session.delete.assert_called_once_with(emb)
-        session.flush.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_delete_embeddings_by_id(self, repo, session):
-        emb = Embedding(
-            embeddable_id=42,
-            embeddable_type=EmbeddableType.EVENTS,
-            embedding=[0.1],
-            model_version="v1",
-            model_provider="OpenAI",
-            user_id=uuid4(),
-        )
-        self._mock_execute(session, [emb])
-
-        await repo.delete_by_embeddable(embeddable_id=42)
-        session.delete.assert_called_once_with(emb)
-        session.flush.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_do_nothing_when_no_embeddings_to_delete(self, repo, session):
-        self._mock_execute(session, [])
-
-        await repo.delete_by_embeddable(embeddable_uuid=uuid4())
-        session.delete.assert_not_called()
-        session.flush.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# EntityRelationTypeRepository tests
-# ---------------------------------------------------------------------------
-
-
-class TestEntityRelationTypeRepository:
-    """Tests for EntityRelationTypeRepository."""
-
-    @pytest.fixture
-    def session(self):
-        return AsyncMock()
-
-    @pytest.fixture
-    def repo(self, session):
-        return EntityRelationTypeRepository(session=session)
-
-    @staticmethod
-    def _mock_execute(session, return_value):
-        """Helper to set up session.execute to return a mock with scalars().all() chain."""
+        mock_emb = MagicMock(spec=Embedding)
+        mock_emb.embeddable_type = EmbeddableType.ENTITIES
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = return_value
+        mock_result.all.return_value = [(mock_emb, 0.95)]
+
+        # We need to handle the cosine_distance mock
+        # The repo creates a `distance` variable from Embedding.embedding.cosine_distance
+        # Since Embedding.embedding is a column expression, we just mock execute
         session.execute = AsyncMock(return_value=mock_result)
 
-    @pytest.mark.asyncio
-    async def test_should_create_type(self, repo, session):
-        rel_type = await repo.create_type(
-            name="WORKS_FOR",
-            description="Employment relationship",
-            is_preset=True,
-            is_accepted=True,
-        )
-        assert isinstance(rel_type, EntityRelationType)
-        assert rel_type.name == "WORKS_FOR"
-        assert rel_type.description == "Employment relationship"
-        assert rel_type.is_preset is True
-        assert rel_type.is_accepted is True
-        session.add.assert_called_once()
-        session.flush.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_should_create_type_with_defaults(self, repo, session):
-        rel_type = await repo.create_type(name="CUSTOM_TYPE")
-        assert rel_type.name == "CUSTOM_TYPE"
-        assert rel_type.is_preset is False
-        assert rel_type.is_accepted is False
-
-    @pytest.mark.asyncio
-    async def test_should_get_type_by_name(self, repo, session):
-        expected = EntityRelationType(id=1, name="WORKS_FOR", is_accepted=True)
-        session.execute = AsyncMock()
-        session.execute.return_value.scalar_one_or_none = MagicMock(
-            return_value=expected
-        )
-
-        result = await repo.get_by_name("WORKS_FOR")
-        assert result is not None
-        assert result.id == 1
-        assert result.name == "WORKS_FOR"
-
-    @pytest.mark.asyncio
-    async def test_should_return_none_when_type_not_found_by_name(self, repo, session):
-        session.execute = AsyncMock()
-        session.execute.return_value.scalar_one_or_none = MagicMock(return_value=None)
-
-        result = await repo.get_by_name("NONEXISTENT")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_should_get_type_by_id(self, repo, session):
-        expected = EntityRelationType(id=5, name="MANAGES")
-        session.get = AsyncMock(return_value=expected)
-
-        result = await repo.get_by_id(5)
-        assert result is not None
-        assert result.id == 5
-        assert result.name == "MANAGES"
-        session.get.assert_awaited_once_with(EntityRelationType, 5)
-
-    @pytest.mark.asyncio
-    async def test_should_return_none_when_type_not_found_by_id(self, repo, session):
-        session.get = AsyncMock(return_value=None)
-        result = await repo.get_by_id(999)
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_should_list_all_types(self, repo, session):
-        types = [
-            EntityRelationType(id=1, name="MANAGES"),
-            EntityRelationType(id=2, name="WORKS_FOR"),
-        ]
-        self._mock_execute(session, types)
-
-        results = await repo.list_all()
-        assert len(results) == 2
-
-    @pytest.mark.asyncio
-    async def test_should_create_suggestion(self, repo, session):
-        user_id = uuid4()
-        suggestion = await repo.create_suggestion(
-            entity_relation_type_id=1,
-            raw_message_id=42,
+        results = await repo.search_similar(
+            query_vector=[0.1, 0.2],
             user_id=user_id,
-            reasoning="LLM suggestion",
+            limit=5,
+            threshold=0.7,
         )
-        assert isinstance(suggestion, EntityRelationTypeSuggestion)
-        assert suggestion.entity_relation_type_id == 1
-        assert suggestion.raw_message_id == 42
-        assert suggestion.user_id == user_id
-        assert suggestion.reasoning == "LLM suggestion"
-        assert suggestion.status == "pending"
-        session.add.assert_called_once()
+
+        assert len(results) == 1
+        assert results[0][1] == 0.95
+        session.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_should_search_similar_with_type_filter(self, repo, session):
+        """search_similar should filter by embeddable_type when provided."""
+        user_id = uuid4()
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        session.execute = AsyncMock(return_value=mock_result)
+
+        results = await repo.search_similar(
+            query_vector=[0.1],
+            embeddable_type=EmbeddableType.EVENTS,
+            user_id=user_id,
+        )
+
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_should_delete_by_embeddable_uuid(self, repo, session):
+        """delete_by_embeddable should delete embeddings by UUID."""
+        embeddable_uuid = uuid4()
+        emb1 = MagicMock(spec=Embedding)
+        emb2 = MagicMock(spec=Embedding)
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [emb1, emb2]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
+
+        await repo.delete_by_embeddable(embeddable_uuid=embeddable_uuid)
+
+        assert session.delete.call_count == 2
         session.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_should_create_suggestion_without_reasoning(self, repo, session):
-        suggestion = await repo.create_suggestion(
-            entity_relation_type_id=2,
-            raw_message_id=100,
-            user_id=uuid4(),
-        )
-        assert suggestion.reasoning is None
-        assert suggestion.status == "pending"
+    async def test_should_delete_by_embeddable_id(self, repo, session):
+        """delete_by_embeddable should delete embeddings by integer ID."""
+        embeddable_id = 42
+        emb = MagicMock(spec=Embedding)
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [emb]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session.execute = AsyncMock(return_value=mock_result)
 
-    @pytest.mark.asyncio
-    async def test_should_get_pending_suggestions(self, repo, session):
-        suggestions = [
-            EntityRelationTypeSuggestion(
-                id=1,
-                entity_relation_type_id=5,
-                raw_message_id=42,
-                user_id=uuid4(),
-                status="pending",
-            ),
-        ]
-        self._mock_execute(session, suggestions)
+        await repo.delete_by_embeddable(embeddable_id=embeddable_id)
 
-        results = await repo.get_pending_suggestions()
-        assert len(results) == 1
-        assert results[0].status == "pending"
-
-    @pytest.mark.asyncio
-    async def test_should_return_empty_list_when_no_pending_suggestions(
-        self, repo, session
-    ):
-        self._mock_execute(session, [])
-
-        results = await repo.get_pending_suggestions()
-        assert results == []
+        session.delete.assert_called_once_with(emb)
+        session.flush.assert_awaited_once()

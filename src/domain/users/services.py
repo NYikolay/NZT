@@ -38,7 +38,7 @@ class UserService:
         self._channel_repo = ConnectionChannelRepository(session)
 
     @log_domain_operation("get_user_by_telegram_id")
-    async def get_user_by_telegram_id(self, telegram_id: int) -> User | None:
+    async def get_user_by_telegram_id(self, telegram_id: int) -> type[User] | None:
         """Look up a User by their Telegram provider user ID.
 
         Returns the raw User model (not a schema) for use in auth dependencies,
@@ -154,7 +154,7 @@ class UserService:
         self,
         user_id: UUID,
         telegram_user: TelegramProviderUser,
-    ) -> UserResponse:
+    ) -> UserResponse | None:
         """Update the existing user's profile from Telegram data."""
         update_data = self._map_telegram_user_to_update(telegram_user)
         return await self.update_user(user_id, update_data)
@@ -174,7 +174,9 @@ class UserService:
             provider=UserIdentitiesProviders.TELEGRAM,
             provider_user_id=provider_user_id,
             profile=telegram_user.model_dump(),
+            user_id=user.id,
         )
+
         await self._auth_repo.create(auth_create.model_dump())
 
         # 3. Create/update the connection channel
@@ -200,7 +202,6 @@ class UserService:
         return UserCreate(
             first_name=telegram_user.first_name,
             username=telegram_user.username,
-            avatar_url=telegram_user.url,
             is_active=True,
         )
 
